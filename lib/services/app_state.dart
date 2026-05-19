@@ -150,7 +150,7 @@ class AppState extends ChangeNotifier {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // SYNC — يستخدم SyncService الجديد مع المسارات المنفصلة
+  // SYNC
   // ══════════════════════════════════════════════════════════════════════════
 
   void _startSync() {
@@ -158,28 +158,18 @@ class AppState extends ChangeNotifier {
     _sync = SyncService(
       shopId: shopId!,
       callbacks: SyncCallbacks(
-        // ── callbacks الاستقبال ──────────────────────────────────────────
         onRemoteDevices: (remoteDevices) {
-          // تحديث الأجهزة من SSE — بس الأجهزة المتاحة (غير الشغالة على هذا الجهاز)
           _mergeRemoteDevices(remoteDevices);
           notifyListeners();
         },
-        // ← جديد
         onRemoteTables: (remoteTables) {
           _mergeRemoteTables(remoteTables);
           notifyListeners();
         },
-        // ← جديد
         onRemoteDrinkTables: (remoteDrinkTables) {
           _mergeRemoteDrinkTables(remoteDrinkTables);
           notifyListeners();
         },
-        onRemoteOperational: (data) {
-          // فضل للتوافق بس مش هيتبعت SSE دلوقتي
-          _mergeRemoteOperational(data);
-          notifyListeners();
-        },
-        // ── builders — بيبنوا الـ payload لكل نوع ──────────────────────
         buildDevicesState: () => devices.map((d) => d.toJson()).toList(),
         buildTables: () => tables,
         buildDrinkTables: () => drinkTables,
@@ -196,36 +186,29 @@ class AppState extends ChangeNotifier {
     _sync!.start();
   }
 
-  /// دمج حالة الأجهزة الواردة من SSE — بيحدّث بس الأجهزة اللي مش شغالة على الموبايل ده
   void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
     if (remoteDevices.isEmpty) return;
 
-    // حافظ على الأجهزة الشغالة محلياً (مش هنبدّلها بالريموت)
     final localActiveIds =
         devices.where((d) => d.isActive).map((d) => d.id).toSet();
 
-    // لو في جهاز جديد في الريموت مش موجود محلياً، أضفه
     final localIds = devices.map((d) => d.id).toSet();
 
     for (final remoteJson in remoteDevices) {
       final remoteId = (remoteJson['id'] as num?)?.toInt() ?? 0;
 
       if (localActiveIds.contains(remoteId)) {
-        // الجهاز ده شغال محلياً — ما نلمسهوش
         continue;
       }
 
       if (localIds.contains(remoteId)) {
-        // جهاز موجود محلياً بس مش شغال — حدّث حالته
         final idx = devices.indexWhere((d) => d.id == remoteId);
         if (idx != -1) {
-          final updated =
-              PSDevice.fromJson(remoteJson, remoteId);
+          final updated = PSDevice.fromJson(remoteJson, remoteId);
           updated.updateTimer();
           devices[idx] = updated;
         }
       } else {
-        // جهاز جديد — أضفه
         final newDevice = PSDevice.fromJson(remoteJson, remoteId);
         newDevice.updateTimer();
         devices.add(newDevice);
@@ -234,25 +217,18 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// دمج التربيزات الواردة من SSE
   void _mergeRemoteTables(List<Map<String, dynamic>> remoteTables) {
     if (remoteTables.isEmpty) return;
 
-    // لو المحل ده هو اللي بعت التحديث (من خلال push) تجاهل الـ SSE echo
-    // اتمرج بس التربيزات الفاضية — اللي شغالة محلياً تفضل زي ما هي
     for (int i = 0; i < remoteTables.length; i++) {
       if (i >= tables.length) {
         tables.add(remoteTables[i]);
         continue;
       }
-      // لو التربيزة فاضية محلياً → اتحدث من الريموت
       if (tables[i]['start_time'] == null) {
         tables[i] = remoteTables[i];
       }
-      // لو التربيزة شغالة محلياً → متلمسهاش (احنا اللي بنتحكم فيها)
     }
-
-    // لو الريموت عنده تربيزات أقل → تجاهل (ممكن مشكلة في البيانات)
   }
 
   void _mergeRemoteDrinkTables(List<Map<String, dynamic>> remoteDrinkTables) {
@@ -265,33 +241,26 @@ class AppState extends ChangeNotifier {
       }
       final localOrders =
           Map<String, int>.from(drinkTables[i]['orders'] ?? {});
-      // لو التربيزة فاضية محلياً → اتحدث من الريموت
       if (localOrders.isEmpty) {
         drinkTables[i] = remoteDrinkTables[i];
       }
-      // لو فيها طلبات محلية → متلمسهاش
     }
   }
 
-  /// دمج التربيزات الواردة من polling
   void _mergeRemoteOperational(Map<String, dynamic> data) {
     if (data.containsKey('tables') && data['tables'] != null) {
       final remoteTables = data['tables'];
       if (remoteTables is List) {
-        // حدّث التربيزات الفاضية فقط — اللي شغالة خليها
         final updatedTables = remoteTables
             .map((t) => Map<String, dynamic>.from(t as Map))
             .toList();
         for (int i = 0; i < updatedTables.length && i < tables.length; i++) {
           if (tables[i]['start_time'] == null) {
-            // تربيزة فاضية — خد الريموت
             tables[i] = updatedTables[i];
           }
         }
-        // لو في تربيزات جديدة في الريموت
         if (updatedTables.length > tables.length) {
-          tables.addAll(
-              updatedTables.sublist(tables.length));
+          tables.addAll(updatedTables.sublist(tables.length));
         }
       }
     }
@@ -302,7 +271,6 @@ class AppState extends ChangeNotifier {
         final updatedDrink = remoteDrink
             .map((t) => Map<String, dynamic>.from(t as Map))
             .toList();
-        // تربيزات مشروبات — حدّث الفاضية بس
         for (int i = 0; i < updatedDrink.length && i < drinkTables.length; i++) {
           final localOrders =
               Map<String, int>.from(drinkTables[i]['orders'] ?? {});
@@ -332,7 +300,6 @@ class AppState extends ChangeNotifier {
 
     shopId = savedId;
 
-    // تحميل local cache أول
     final localData = await SyncService.loadLocal(savedId);
     if (localData != null) {
       _applyData(localData);
@@ -457,17 +424,14 @@ class AppState extends ChangeNotifier {
   Future<void> loadData() async {
     if (shopId == null) return;
 
-    // أول حاجة: local cache
     final local = await SyncService.loadLocal(shopId!);
     if (local != null) {
       _applyData(local);
       notifyListeners();
     }
 
-    // تاني حاجة: pull من Firebase بالمسارات الجديدة
     try {
-      final remoteData =
-          await FirebaseService.pullAllData(shopId!);
+      final remoteData = await FirebaseService.pullAllData(shopId!);
       if (remoteData != null) {
         _applyData(remoteData);
         await SyncService.saveLocal(shopId!, remoteData);
@@ -475,136 +439,104 @@ class AppState extends ChangeNotifier {
       }
     } catch (_) {}
 
-    // ابدأ الـ sync المستمر
     _startSync();
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // APPLY DATA — بيطبّق الداتا على الـ state
+  // APPLY DATA
   // ══════════════════════════════════════════════════════════════════════════
 
   void _applyData(Map<String, dynamic> data) {
-    // ── History ──────────────────────────────────────────────────────────
     if (data['history'] != null) {
       history = List<Map<String, dynamic>>.from(
           (data['history'] as List)
               .map((h) => Map<String, dynamic>.from(h)));
     }
 
-    // ── Prices ───────────────────────────────────────────────────────────
     final pricesRaw = data['prices'] ?? data['static']?['prices'];
     if (pricesRaw != null) {
       final raw = Map<String, dynamic>.from(pricesRaw);
       _migratePrices(raw);
     }
 
-    // ── Menu & Inventory ──────────────────────────────────────────────────
     final menuRaw = data['menu'] ?? data['static']?['menu'];
     if (menuRaw != null) {
       menu = Map<String, int>.from(menuRaw);
     }
 
-    final inventoryRaw =
-        data['inventory'] ?? data['static']?['inventory'];
+    final inventoryRaw = data['inventory'] ?? data['static']?['inventory'];
     if (inventoryRaw != null) {
       inventory = Map<String, int>.from(inventoryRaw);
     }
 
-    final summaryRaw = data['daily_inventory_summary'] ??
-        data['daily_summary'];
+    final summaryRaw = data['daily_inventory_summary'] ?? data['daily_summary'];
     if (summaryRaw != null) {
       dailyInventorySummary = Map<String, int>.from(summaryRaw);
     }
 
-    // ── Debts ─────────────────────────────────────────────────────────────
     final debtsRaw = data['debts'] ?? data['static']?['debts'];
     if (debtsRaw != null) {
       debts = List<Map<String, dynamic>>.from(
           (debtsRaw as List).map((d) => Map<String, dynamic>.from(d)));
     }
 
-    // ── Tables ────────────────────────────────────────────────────────────
-    final tablesRaw =
-        data['tables'] ?? data['operational']?['tables'];
+    final tablesRaw = data['tables'] ?? data['operational']?['tables'];
     if (tablesRaw != null) {
       tables = List<Map<String, dynamic>>.from(
-          (tablesRaw as List)
-              .map((t) => Map<String, dynamic>.from(t)));
+          (tablesRaw as List).map((t) => Map<String, dynamic>.from(t)));
     }
 
-    final drinkRaw =
-        data['drink_tables'] ?? data['operational']?['drink_tables'];
+    final drinkRaw = data['drink_tables'] ?? data['operational']?['drink_tables'];
     if (drinkRaw != null) {
       drinkTables = List<Map<String, dynamic>>.from(
-          (drinkRaw as List)
-              .map((t) => Map<String, dynamic>.from(t)));
+          (drinkRaw as List).map((t) => Map<String, dynamic>.from(t)));
     }
 
-    // ── Settings / Static ─────────────────────────────────────────────────
     final settingsRaw = data['static']?['settings'];
-    final adminHash = data['admin_password_hash'] ??
-        settingsRaw?['admin_password_hash'];
+    final adminHash = data['admin_password_hash'] ?? settingsRaw?['admin_password_hash'];
     if (adminHash != null) adminPasswordHash = adminHash;
 
-    final shopNameRaw =
-        data['shop_name'] ?? settingsRaw?['shop_name'];
+    final shopNameRaw = data['shop_name'] ?? settingsRaw?['shop_name'];
     if (shopNameRaw != null) shopName = shopNameRaw;
 
-    final matchEnabledRaw =
-        data['match_enabled'] ?? settingsRaw?['match_enabled'];
+    final matchEnabledRaw = data['match_enabled'] ?? settingsRaw?['match_enabled'];
     if (matchEnabledRaw != null) matchEnabled = matchEnabledRaw;
 
-    // ── Cashiers ──────────────────────────────────────────────────────────
-    final cashiersRaw =
-        data['cashiers'] ?? data['static']?['cashiers'];
+    final cashiersRaw = data['cashiers'] ?? data['static']?['cashiers'];
     if (cashiersRaw != null) {
       cashiers = List<Map<String, dynamic>>.from(
-          (cashiersRaw as List)
-              .map((c) => Map<String, dynamic>.from(c)));
+          (cashiersRaw as List).map((c) => Map<String, dynamic>.from(c)));
     } else if (data['cashier_password_hash'] != null) {
       cashiers = [
-        {
-          'name': 'كاشير 1',
-          'hash': data['cashier_password_hash'] as String
-        }
+        {'name': 'كاشير 1', 'hash': data['cashier_password_hash'] as String}
       ];
     }
     if (cashiers.isEmpty) {
-      cashiers = [
-        {'name': 'كاشير 1', 'hash': _defaultCashierHash}
-      ];
+      cashiers = [{'name': 'كاشير 1', 'hash': _defaultCashierHash}];
     }
 
-    // ── Tournaments ───────────────────────────────────────────────────────
     final tournamentsRaw = data['tournaments'];
     if (tournamentsRaw != null) {
       tournaments = List<Map<String, dynamic>>.from(
-          (tournamentsRaw as List)
-              .map((t) => Map<String, dynamic>.from(t)));
+          (tournamentsRaw as List).map((t) => Map<String, dynamic>.from(t)));
     }
 
-    // ── Shifts ────────────────────────────────────────────────────────────
-    final shiftsHistoryRaw =
-        data['shifts_history'] ?? data['records']?['shifts_history'];
+    final shiftsHistoryRaw = data['shifts_history'] ?? data['records']?['shifts_history'];
     if (shiftsHistoryRaw != null) {
       shiftsHistory = List<ShiftRecord>.from(
         (shiftsHistoryRaw as List).map(
-          (s) => ShiftRecord.fromJson(
-              Map<String, dynamic>.from(s)),
+          (s) => ShiftRecord.fromJson(Map<String, dynamic>.from(s)),
         ),
       );
     }
 
-    final openShiftsRaw =
-        data['open_shifts'] ?? data['records']?['open_shifts'];
+    final openShiftsRaw = data['open_shifts'] ?? data['records']?['open_shifts'];
     if (openShiftsRaw != null) {
       final raw = Map<String, dynamic>.from(openShiftsRaw);
       openShifts = raw.map((k, v) => MapEntry(
           k, ShiftRecord.fromJson(Map<String, dynamic>.from(v))));
     }
 
-    // ── Devices ───────────────────────────────────────────────────────────
-    // من المسار الجديد: realtime/devices_state → { devices: [...] }
     List? devStates;
     if (data['realtime']?['devices_state']?['devices'] != null) {
       devStates = data['realtime']['devices_state']['devices'] as List;
@@ -630,8 +562,7 @@ class AppState extends ChangeNotifier {
   }
 
   void _migratePrices(Map<String, dynamic> raw) {
-    if (raw.containsKey('match_price') &&
-        !raw.containsKey('match_ps4_normal')) {
+    if (raw.containsKey('match_price') && !raw.containsKey('match_ps4_normal')) {
       final old = (raw['match_price'] as num).toInt();
       raw['match_ps4_normal'] = old;
       raw['match_ps4_multi'] = (old * 1.5).round();
@@ -660,7 +591,7 @@ class AppState extends ChangeNotifier {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // BUILD DATA — بيبني الـ payload المحلي الشامل (للـ local cache)
+  // BUILD DATA
   // ══════════════════════════════════════════════════════════════════════════
 
   Map<String, dynamic> _buildDataDict() {
@@ -681,8 +612,7 @@ class AppState extends ChangeNotifier {
       'match_enabled': matchEnabled,
       'tournaments': tournaments,
       'shifts_history': shiftsHistory.map((s) => s.toJson()).toList(),
-      'open_shifts':
-          openShifts.map((k, v) => MapEntry(k, v.toJson())),
+      'open_shifts': openShifts.map((k, v) => MapEntry(k, v.toJson())),
       'devices_state': devices.map((d) => d.toJson()).toList(),
       'last_updated': DateTime.now().millisecondsSinceEpoch,
     };
@@ -707,22 +637,16 @@ class AppState extends ChangeNotifier {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // SAVE DATA — بيحفظ محلياً ويبعت للـ Firebase حسب نوع البيانات
+  // SAVE DATA
   // ══════════════════════════════════════════════════════════════════════════
 
   Future<void> saveData() async {
     if (shopId == null) return;
-
-    // حفظ محلي شامل
     final data = _buildDataDict();
     await SyncService.saveLocal(shopId!, data);
-
-    // بعد ما نحفظ محلياً، نبعت للـ SyncService
-    // (هو بيتولى الإرسال للـ Firebase بالمسارات الصح)
     _sync?.schedulePushStatic();
   }
 
-  /// بعت حالة الأجهزة فوراً (بيتبعت بعد كل تغيير في الأجهزة)
   Future<void> _saveDevices() async {
     if (shopId == null) return;
     final data = _buildDataDict();
@@ -730,7 +654,6 @@ class AppState extends ChangeNotifier {
     await _sync?.pushDevices();
   }
 
-  /// بعت التربيزات (بيتبعت بعد كل تغيير في التربيزات)
   void _saveTables() {
     if (shopId == null) return;
     _buildDataDict().let((data) async {
@@ -739,7 +662,6 @@ class AppState extends ChangeNotifier {
     _sync?.schedulePushTables();
   }
 
-  /// بعت السجلات فوراً (بعد إنهاء جلسة)
   Future<void> _saveHistory() async {
     if (shopId == null) return;
     final data = _buildDataDict();
@@ -752,10 +674,7 @@ class AppState extends ChangeNotifier {
   // ══════════════════════════════════════════════════════════════════════════
 
   void addCashier(String name, String password) {
-    cashiers.add({
-      'name': name.trim(),
-      'hash': hashPassword(password),
-    });
+    cashiers.add({'name': name.trim(), 'hash': hashPassword(password)});
     saveData();
     notifyListeners();
   }
@@ -783,8 +702,7 @@ class AppState extends ChangeNotifier {
   // SESSION LOG
   // ══════════════════════════════════════════════════════════════════════════
 
-  void _logEvent(PSDevice d, String type,
-      {String? note, int? minutes}) {
+  void _logEvent(PSDevice d, String type, {String? note, int? minutes}) {
     final now = DateTime.now();
     final timeStr =
         '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
@@ -828,23 +746,21 @@ class AppState extends ChangeNotifier {
     }
 
     _alertedDevices.remove(d.id);
-    _saveDevices(); // فوري للأجهزة
+    _saveDevices();
     notifyListeners();
   }
 
   void togglePause(PSDevice d) {
     if (d.isPaused) {
       final pausedDuration =
-          (DateTime.now().millisecondsSinceEpoch ~/ 1000) -
-              d.pauseStartTime!;
+          (DateTime.now().millisecondsSinceEpoch ~/ 1000) - d.pauseStartTime!;
       d.startTime = d.startTime! + pausedDuration;
       d.isPaused = false;
       d.pauseStartTime = null;
       _logEvent(d, 'resume', note: 'استأنف اللعب');
     } else {
       d.isPaused = true;
-      d.pauseStartTime =
-          DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      d.pauseStartTime = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       _logEvent(d, 'pause', note: 'إيقاف مؤقت');
     }
     _saveDevices();
@@ -989,7 +905,6 @@ class AppState extends ChangeNotifier {
     _alertedDevices.remove(d.id);
     _countdownAlertedDevices.remove(d.id);
 
-    // بعت الأجهزة والـ history معاً
     _saveDevices();
     _saveHistory();
     notifyListeners();
@@ -1025,13 +940,11 @@ class AppState extends ChangeNotifier {
     to.orders = Map<String, int>.from(from.orders);
     to.status = 'شغال';
     to.timerAlertMinutes = from.timerAlertMinutes;
-    to.sessionLog =
-        List<Map<String, dynamic>>.from(from.sessionLog);
+    to.sessionLog = List<Map<String, dynamic>>.from(from.sessionLog);
     to.isCountdown = from.isCountdown;
     to.countdownTotalSeconds = from.countdownTotalSeconds;
     to.countdownAlertSent = from.countdownAlertSent;
-    _logEvent(to, 'transfer',
-        note: 'تم نقل الجلسة من ${from.displayName}');
+    _logEvent(to, 'transfer', note: 'تم نقل الجلسة من ${from.displayName}');
 
     from.status = 'متاح';
     from.startTime = null;
@@ -1057,10 +970,8 @@ class AppState extends ChangeNotifier {
     _sync?.pause();
     archiving = true;
     try {
-      final totalTime =
-          history.fold(0.0, (s, h) => s + (h['time_cost'] ?? 0));
-      final totalBuffet =
-          history.fold(0.0, (s, h) => s + (h['buffet_cost'] ?? 0));
+      final totalTime = history.fold(0.0, (s, h) => s + (h['time_cost'] ?? 0));
+      final totalBuffet = history.fold(0.0, (s, h) => s + (h['buffet_cost'] ?? 0));
       final archive = {
         'date': DateTime.now().toString(),
         'total_time': totalTime,
@@ -1182,8 +1093,7 @@ class AppState extends ChangeNotifier {
       t['pause_start_time'] = null;
     } else {
       t['is_paused'] = true;
-      t['pause_start_time'] =
-          DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      t['pause_start_time'] = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     }
     _saveTables();
     notifyListeners();
@@ -1207,14 +1117,12 @@ class AppState extends ChangeNotifier {
     if (t['is_paused'] == true && t['pause_start_time'] != null) {
       elapsed = (t['pause_start_time'] as int) - startTime;
     } else {
-      elapsed =
-          (DateTime.now().millisecondsSinceEpoch ~/ 1000) - startTime;
+      elapsed = (DateTime.now().millisecondsSinceEpoch ~/ 1000) - startTime;
     }
 
     final rate = (t['rate'] as num).toDouble();
     final timeCost = (elapsed / 3600) * rate;
-    final Map<String, int> orders =
-        Map<String, int>.from(t['orders'] ?? {});
+    final Map<String, int> orders = Map<String, int>.from(t['orders'] ?? {});
     double buffetCost = 0;
     orders.forEach((item, qty) => buffetCost += qty * (menu[item] ?? 0));
 
@@ -1312,16 +1220,14 @@ class AppState extends ChangeNotifier {
       if (available != null && available <= 0) {
         return 'نفد "$item" من المخزن!';
       }
-      final orders =
-          Map<String, int>.from(drinkTables[index]['orders'] ?? {});
+      final orders = Map<String, int>.from(drinkTables[index]['orders'] ?? {});
       final currentInOrder = orders[item] ?? 0;
       final totalNeeded = currentInOrder + qty;
       if (available != null && totalNeeded > available) {
         return 'الكمية المتاحة هي $available فقط!';
       }
     }
-    final orders =
-        Map<String, int>.from(drinkTables[index]['orders'] ?? {});
+    final orders = Map<String, int>.from(drinkTables[index]['orders'] ?? {});
     orders[item] = (orders[item] ?? 0) + qty;
     if (orders[item]! <= 0) orders.remove(item);
     drinkTables[index]['orders'] = orders;
@@ -1332,8 +1238,7 @@ class AppState extends ChangeNotifier {
 
   Map<String, dynamic> checkoutDrinkTable(int index) {
     final t = drinkTables[index];
-    final Map<String, int> orders =
-        Map<String, int>.from(t['orders'] ?? {});
+    final Map<String, int> orders = Map<String, int>.from(t['orders'] ?? {});
     double total = 0;
     orders.forEach((item, qty) {
       total += qty * (menu[item] ?? 0);
@@ -1372,13 +1277,11 @@ class AppState extends ChangeNotifier {
     if (!device.isActive) {
       device.mode = 'normal';
       device.status = 'شغال';
-      device.startTime =
-          DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      device.startTime = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       device.addedSeconds = 0;
       device.isPaused = false;
       device.sessionLog = [];
-      _logEvent(device, 'start',
-          note: 'بدأ اللعب (تحويل من طاولة طلبات)');
+      _logEvent(device, 'start', note: 'بدأ اللعب (تحويل من طاولة طلبات)');
       _alertedDevices.remove(device.id);
     }
     orders.forEach((item, qty) {
@@ -1395,8 +1298,7 @@ class AppState extends ChangeNotifier {
         Map<String, int>.from(drinkTables[drinkIndex]['orders'] ?? {});
     final t = tables[tableIndex];
     if (t['start_time'] == null) {
-      t['start_time'] =
-          DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      t['start_time'] = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       t['is_paused'] = false;
       t['pause_start_time'] = null;
     }
@@ -1437,8 +1339,7 @@ class AppState extends ChangeNotifier {
     if (inventory.containsKey(item)) {
       inventory[item] = (inventory[item]! - qty).clamp(0, 99999);
     }
-    dailyInventorySummary[item] =
-        (dailyInventorySummary[item] ?? 0) + qty;
+    dailyInventorySummary[item] = (dailyInventorySummary[item] ?? 0) + qty;
   }
 
   void addInventory(String item, int qty) {
@@ -1475,11 +1376,7 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  String? login(
-    String password, {
-    required String targetRole,
-    String? targetCashierName,
-  }) {
+  String? login(String password, {required String targetRole, String? targetCashierName}) {
     final hash = hashPassword(password);
 
     if (targetRole == 'admin') {
@@ -1680,8 +1577,8 @@ class AppState extends ChangeNotifier {
     final shiftTransactions = history.where((h) {
       final date = DateTime.tryParse(h['date']?.toString() ?? '');
       if (date == null) return false;
-      final isAfterStart = date.isAfter(shiftStart) ||
-          date.isAtSameMomentAs(shiftStart);
+      final isAfterStart =
+          date.isAfter(shiftStart) || date.isAtSameMomentAs(shiftStart);
       final byCashier = h['cashier']?.toString() == cashierName;
       return isAfterStart && byCashier;
     }).toList();
@@ -1696,7 +1593,6 @@ class AppState extends ChangeNotifier {
     shiftsHistory.add(closedShift);
     openShifts.remove(cashierName);
 
-    // بعت الشيفتات للـ SyncService
     final data = _buildDataDict();
     await SyncService.saveLocal(shopId!, data);
     _sync?.schedulePushShifts();
@@ -1718,7 +1614,7 @@ class AppState extends ChangeNotifier {
   @override
   void dispose() {
     _clockTimer?.cancel();
-    _sync?.flushAll(); // بعت أي pending data قبل الإغلاق
+    _sync?.flushAll();
     _sync?.dispose();
     super.dispose();
   }
