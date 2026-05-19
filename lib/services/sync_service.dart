@@ -1,179 +1,345 @@
 // lib/services/sync_service.dart
 //
-// طبقة المزامنة مع Firebase — مفصولة تماماً عن AppState
-// =========================================================
-// المبادئ:
-//   1. كل عملية sync بتشتغل على ترتيب واحد (queue) — مفيش race conditions
-//   2. Optimistic local-first: نحفظ locally أول ثم نبعت للـ Firebase
-//   3. Merge بالـ timestamp: السيرفر يغلب بس لو أحدث فعلاً
-//   4. Retry تلقائي مع exponential backoff
-//   5. Pause/resume — بيوقف المزامنة وقت الـ archive
+// طبقة المزامنة الجديدة — مقسّمة حسب نوع البيانات
+// ═══════════════════════════════════════════════════
+//
+// الاستراتيجيات:
+//   1. الأجهزة        → SSE (فوري من Firebase) + push عند كل تغيير
+//   2. التربيزات      → push عند التغيير + pull كل 3 ثواني
+//   3. البيانات الثابتة → push عند التعديل فقط
+//   4. السجلات        → push عند الإضافة فقط (append)
+//   5. المديونيات     → push عند التغيير
 
 import 'dart:async';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'firebase_service.dart';
 
-// ─── نوع البيانات اللي بتتبادل ────────────────────────────────────────────────
-
 typedef DataMap = Map<String, dynamic>;
 
-// ─── Callbacks ────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// SyncCallbacks — الـ callbacks اللي AppState بيوفّرها
+// ═══════════════════════════════════════════════════════════════════════════════
 
-/// بيتبعت لما يجي data أحدث من Firebase
-typedef OnRemoteData = void Function(DataMap data);
+class SyncCallbacks {
+  /// بيتبعت لما تيجي حالة أجهزة جديدة من Firebase
+  final void Function(List<Map<String, dynamic>> devices) onRemoteDevices;
 
-/// بيتبعت عشان AppState يبني الـ payload الحالي
-typedef DataBuilder = DataMap Function();
+  /// بيتبعت لما تيجي بيانات تشغيلية جديدة (تربيزات)
+  final void Function(DataMap data) onRemoteOperational;
+
+  /// بناء بيانات الأجهزة للرفع
+  final List<Map<String, dynamic>> Function() buildDevicesState;
+
+  /// بناء بيانات التربيزات
+  final List<Map<String, dynamic>> Function() buildTables;
+  final List<Map<String, dynamic>> Function() buildDrinkTables;
+
+  /// بناء البيانات الثابتة
+  final DataMap Function() buildStaticData;
+
+  /// بناء السجلات اليومية
+  final List<Map<String, dynamic>> Function() buildHistory;
+
+  /// بناء الشيفتات
+  final Map<String, dynamic> Function() buildOpenShifts;
+  final List<Map<String, dynamic>> Function() buildShiftsHistory;
+
+  /// بناء المديونيات
+  final List<Map<String, dynamic>> Function() buildDebts;
+
+  /// بناء البطولات
+  final List<Map<String, dynamic>> Function() buildTournaments;
+
+  const SyncCallbacks({
+    required this.onRemoteDevices,
+    required this.onRemoteOperational,
+    required this.buildDevicesState,
+    required this.buildTables,
+    required this.buildDrinkTables,
+    required this.buildStaticData,
+    required this.buildHistory,
+    required this.buildOpenShifts,
+    required this.buildShiftsHistory,
+    required this.buildDebts,
+    required this.buildTournaments,
+  });
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SyncService
+// SyncService الجديد
 // ═══════════════════════════════════════════════════════════════════════════════
 
 class SyncService {
-  // ── إعدادات ──────────────────────────────────────────────────────────────
-
-  /// المدة بين كل sync دورة (push ثم pull)
-  static const Duration _interval = Duration(seconds: 8);
-
-  /// أقصى تأخير في الـ retry backoff
-  static const Duration _maxBackoff = Duration(seconds: 30);
-
-  // ── الحالة الداخلية ───────────────────────────────────────────────────────
-
   final String shopId;
-  final OnRemoteData onRemoteData;
-  final DataBuilder buildData;
+  final SyncCallbacks callbacks;
 
-  Timer? _timer;
+  // ── Timers ────────────────────────────────────────────────────────────────
+  Timer? _operationalTimer; // polling للتربيزات كل 3 ثواني
+  Timer? _debounceTimer;    // debounce للـ push
+
+  // ── SSE subscription للأجهزة ──────────────────────────────────────────────
+  StreamSubscription? _devicesSSE;
+
+  // ── حالة ──────────────────────────────────────────────────────────────────
   bool _paused = false;
-  bool _running = false;             // يمنع تداخل الدورات
-  int _consecutiveErrors = 0;
+  bool _disposed = false;
 
-  /// آخر timestamp اتحفظ locally — بيتستخدم للمقارنة مع السيرفر
-  int _localTimestamp = 0;
+  // ── pending flags — بيتحددوا لما في تغيير محتاج يتبعت ──────────────────
+  bool _pendingDevices = false;
+  bool _pendingTables = false;
+  bool _pendingStatic = false;
+  bool _pendingHistory = false;
+  bool _pendingDebts = false;
+  bool _pendingShifts = false;
+  bool _pendingTournaments = false;
 
-  /// قائمة انتظار — لو في push pending ومش قدرنا نبعته
-  bool _pendingPush = false;
+  // ── آخر timestamp للأجهزة اللي اتبعت ─────────────────────────────────────
+  int _lastDevicesPushTs = 0;
 
-  SyncService({
-    required this.shopId,
-    required this.onRemoteData,
-    required this.buildData,
-  });
+  SyncService({required this.shopId, required this.callbacks});
 
-  // ── Public API ────────────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Start / Stop
+  // ═══════════════════════════════════════════════════════════════════════════
 
-  /// ابدأ المزامنة الدورية
   void start() {
-    _timer?.cancel();
-    _timer = Timer.periodic(_interval, (_) => _cycle());
-    // أول pull فوري بعد الـ start
-    _pullFromFirebase();
+    _startDevicesSSE();
+    _startOperationalPolling();
   }
 
-  /// وقّف المزامنة (مثلاً وقت الـ archive)
   void pause() => _paused = true;
 
-  /// استأنف المزامنة
   void resume() {
     _paused = false;
-    _cycle(); // دورة فورية بعد الاستئناف
+    _flushPending();
   }
 
-  /// تحديث الـ timestamp المحلي (بيتبعت من AppState بعد كل saveData)
-  void updateLocalTimestamp(int ts) => _localTimestamp = ts;
-
-  /// ابعت البيانات الحالية للـ Firebase فوراً (مثلاً بعد أي تغيير)
-  Future<void> pushNow() async {
-    _pendingPush = true;
-    await _pushToFirebase();
-  }
-
-  /// اقفل كل حاجة
   void dispose() {
-    _timer?.cancel();
-    _timer = null;
+    _disposed = true;
+    _devicesSSE?.cancel();
+    _operationalTimer?.cancel();
+    _debounceTimer?.cancel();
   }
 
-  // ── الدورة الأساسية ───────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SSE للأجهزة — فوري
+  // ═══════════════════════════════════════════════════════════════════════════
 
-  Future<void> _cycle() async {
-    if (_paused || _running) return;
-    _running = true;
-    try {
-      // 1. لو في push pending — ابعته أول
-      if (_pendingPush) await _pushToFirebase();
-
-      // 2. pull وشوف في حاجة أحدث
-      await _pullFromFirebase();
-
-      _consecutiveErrors = 0; // reset الـ backoff
-    } catch (_) {
-      _consecutiveErrors++;
-    } finally {
-      _running = false;
-    }
+  void _startDevicesSSE() {
+    _devicesSSE?.cancel();
+    _devicesSSE = FirebaseService.listenToDevices(
+      shopId,
+      onData: (devices) {
+        if (_disposed || _paused) return;
+        callbacks.onRemoteDevices(devices);
+      },
+      onError: (_) {
+        // لو SSE انقطع، هيحاول يتوصل تاني تلقائياً
+      },
+      retryDelay: const Duration(seconds: 2),
+    );
   }
 
-  // ── Push ──────────────────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Polling للتربيزات — كل 3 ثواني
+  // ═══════════════════════════════════════════════════════════════════════════
 
-  Future<void> _pushToFirebase() async {
+  void _startOperationalPolling() {
+    _operationalTimer?.cancel();
+    _operationalTimer = Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => _pullOperational(),
+    );
+  }
+
+  Future<void> _pullOperational() async {
+    if (_paused || _disposed) return;
     try {
-      final payload = buildData();
-      final ok = await FirebaseService.set(
-        FirebaseService.shopDataPath(shopId),
-        payload,
-      );
-      if (ok) {
-        _pendingPush = false;
-        // حفظ محلي أيضاً
-        await _saveLocal(payload);
+      final results = await Future.wait([
+        FirebaseService.get(FirebaseService.tablesPath(shopId)),
+        FirebaseService.get(FirebaseService.drinkTablesPath(shopId)),
+      ]);
+
+      final tablesData = results[0];
+      final drinkTablesData = results[1];
+
+      final operational = <String, dynamic>{};
+      if (tablesData != null) operational['tables'] = tablesData;
+      if (drinkTablesData != null)
+        operational['drink_tables'] = drinkTablesData;
+
+      if (operational.isNotEmpty) {
+        callbacks.onRemoteOperational(operational);
       }
-    } catch (e) {
-      // هنحاول في الدورة الجاية
-      _pendingPush = true;
-      rethrow;
-    }
+    } catch (_) {}
   }
 
-  // ── Pull ──────────────────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Push Methods — بيتبعتوا من AppState عند التغيير
+  // ═══════════════════════════════════════════════════════════════════════════
 
-  Future<void> _pullFromFirebase() async {
+  /// حالة الأجهزة — فورية (بدون debounce)
+  Future<void> pushDevices() async {
+    if (_paused || _disposed) {
+      _pendingDevices = true;
+      return;
+    }
+    _pendingDevices = false;
     try {
-      final data = await FirebaseService.get(
-        FirebaseService.shopDataPath(shopId),
-      );
-
-      if (data == null || data is! Map) return;
-
-      final remoteTs = (data['last_updated'] as num?)?.toInt() ?? 0;
-
-      // بنحدث بس لو السيرفر أحدث فعلاً
-      if (remoteTs > _localTimestamp) {
-        _localTimestamp = remoteTs;
-        final typed = Map<String, dynamic>.from(data);
-        await _saveLocal(typed);
-        onRemoteData(typed);
-      }
+      final devices = callbacks.buildDevicesState();
+      await FirebaseService.pushDevicesState(shopId, devices);
+      _lastDevicesPushTs = DateTime.now().millisecondsSinceEpoch;
     } catch (_) {
-      // نتجاهل أخطاء الـ pull — الـ local data كافية
-      rethrow;
+      _pendingDevices = true;
     }
   }
 
-  // ── Local Cache ───────────────────────────────────────────────────────────
+  /// التربيزات — مع debounce 500ms
+  void schedulePushTables() {
+    _pendingTables = true;
+    _scheduleDebounce();
+  }
 
-  Future<void> _saveLocal(DataMap data) async {
+  /// البيانات الثابتة — مع debounce 1 ثانية
+  void schedulePushStatic() {
+    _pendingStatic = true;
+    _scheduleDebounce();
+  }
+
+  /// السجلات — فورية
+  Future<void> pushHistory() async {
+    if (_paused || _disposed) {
+      _pendingHistory = true;
+      return;
+    }
+    _pendingHistory = false;
+    try {
+      final history = callbacks.buildHistory();
+      await FirebaseService.pushHistory(shopId, history);
+    } catch (_) {
+      _pendingHistory = true;
+    }
+  }
+
+  /// الشيفتات
+  void schedulePushShifts() {
+    _pendingShifts = true;
+    _scheduleDebounce();
+  }
+
+  /// المديونيات
+  void schedulePushDebts() {
+    _pendingDebts = true;
+    _scheduleDebounce();
+  }
+
+  /// البطولات
+  void schedulePushTournaments() {
+    _pendingTournaments = true;
+    _scheduleDebounce();
+  }
+
+  /// Flush كل البيانات المعلقة (بعد resume أو قبل dispose)
+  Future<void> _flushPending() async {
+    if (_disposed) return;
+
+    if (_pendingDevices) await pushDevices();
+    if (_pendingTables) await _pushTables();
+    if (_pendingStatic) await _pushStatic();
+    if (_pendingHistory) await pushHistory();
+    if (_pendingShifts) await _pushShifts();
+    if (_pendingDebts) await _pushDebts();
+    if (_pendingTournaments) await _pushTournaments();
+  }
+
+  Future<void> flushAll() => _flushPending();
+
+  // ─── Debounce ──────────────────────────────────────────────────────────────
+
+  void _scheduleDebounce() {
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(
+      const Duration(milliseconds: 800),
+      _flushPending,
+    );
+  }
+
+  // ─── Internal Push ────────────────────────────────────────────────────────
+
+  Future<void> _pushTables() async {
+    if (_paused || _disposed) return;
+    _pendingTables = false;
+    try {
+      await Future.wait([
+        FirebaseService.pushTables(shopId, callbacks.buildTables()),
+        FirebaseService.pushDrinkTables(
+            shopId, callbacks.buildDrinkTables()),
+      ]);
+    } catch (_) {
+      _pendingTables = true;
+    }
+  }
+
+  Future<void> _pushStatic() async {
+    if (_paused || _disposed) return;
+    _pendingStatic = false;
+    try {
+      await FirebaseService.pushStaticData(
+          shopId, callbacks.buildStaticData());
+    } catch (_) {
+      _pendingStatic = true;
+    }
+  }
+
+  Future<void> _pushShifts() async {
+    if (_paused || _disposed) return;
+    _pendingShifts = false;
+    try {
+      await Future.wait([
+        FirebaseService.pushOpenShifts(
+            shopId, callbacks.buildOpenShifts()),
+        FirebaseService.pushShiftsHistory(
+            shopId, callbacks.buildShiftsHistory()),
+      ]);
+    } catch (_) {
+      _pendingShifts = true;
+    }
+  }
+
+  Future<void> _pushDebts() async {
+    if (_paused || _disposed) return;
+    _pendingDebts = false;
+    try {
+      await FirebaseService.pushDebts(shopId, callbacks.buildDebts());
+    } catch (_) {
+      _pendingDebts = true;
+    }
+  }
+
+  Future<void> _pushTournaments() async {
+    if (_paused || _disposed) return;
+    _pendingTournaments = false;
+    try {
+      await FirebaseService.pushTournaments(
+          shopId, callbacks.buildTournaments());
+    } catch (_) {
+      _pendingTournaments = true;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Local Cache
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  static Future<void> saveLocal(
+      String shopId, Map<String, dynamic> data) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('app_data_$shopId', jsonEncode(data));
-    } catch (_) {
-      // ignore storage errors
-    }
+    } catch (_) {}
   }
 
-  /// تحميل الـ cache المحلي عند بداية التطبيق
   static Future<DataMap?> loadLocal(String shopId) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -183,14 +349,5 @@ class SyncService {
     } catch (_) {
       return null;
     }
-  }
-
-  // ── Backoff Helper ────────────────────────────────────────────────────────
-
-  /// المدة الحالية للانتظار قبل إعادة المحاولة
-  Duration get _backoffDuration {
-    final seconds = (2 << _consecutiveErrors.clamp(0, 4));
-    final dur = Duration(seconds: seconds);
-    return dur > _maxBackoff ? _maxBackoff : dur;
   }
 }
