@@ -6,16 +6,17 @@ import 'package:http/http.dart' as http;
 // FirebaseService — مقسّم لمسارات منفصلة حسب نوع البيانات
 //
 // المسارات:
-//   realtime/devices_state   ← حالة الأجهزة (SSE - فوري)
-//   operational/             ← تربيزات وطلبات (push عند التغيير)
-//   static/                  ← أسعار ومنيو وإعدادات (push عند التعديل)
-//   records/history          ← السجلات اليومية (append)
-//   records/shifts           ← الشيفتات (append)
-//   archives/                ← الأرشيف (append فقط)
-//   yearly_archives/         ← الأرشيف السنوي
-//   subscription             ← بيانات الاشتراك
-//   tournaments              ← البطولات
-//   customer_orders          ← طلبات العملاء
+//   realtime/devices_state      ← حالة الأجهزة (SSE - فوري)
+//   realtime/tables_state       ← حالة التربيزات (SSE - فوري) ← جديد
+//   realtime/drink_tables_state ← حالة تربيزات المشروبات (SSE - فوري) ← جديد
+//   static/                     ← أسعار ومنيو وإعدادات (push عند التعديل)
+//   records/history             ← السجلات اليومية (append)
+//   records/shifts              ← الشيفتات (append)
+//   archives/                   ← الأرشيف (append فقط)
+//   yearly_archives/            ← الأرشيف السنوي
+//   subscription                ← بيانات الاشتراك
+//   tournaments                 ← البطولات
+//   customer_orders             ← طلبات العملاء
 // ═══════════════════════════════════════════════════════════════════════════════
 
 class FirebaseService {
@@ -86,7 +87,15 @@ class FirebaseService {
   static String devicesStatePath(String shopId) =>
       'shops/$shopId/realtime/devices_state';
 
-  /// التربيزات والطلبات — بتتزامن عند التغيير
+  /// حالة التربيزات اللحظية — بتتزامن بـ SSE (جديد)
+  static String tablesStatePath(String shopId) =>
+      'shops/$shopId/realtime/tables_state';
+
+  /// حالة تربيزات المشروبات اللحظية — بتتزامن بـ SSE (جديد)
+  static String drinkTablesStatePath(String shopId) =>
+      'shops/$shopId/realtime/drink_tables_state';
+
+  /// مسارات operational — للتوافق مع pullAllData فقط
   static String tablesPath(String shopId) =>
       'shops/$shopId/operational/tables';
 
@@ -156,7 +165,7 @@ class FirebaseService {
   // Push منفصل لكل نوع بيانات
   // ═══════════════════════════════════════════════════════════════════════════
 
-  /// رفع حالة الأجهزة فقط (الأسرع والأكثر تكراراً)
+  /// رفع حالة الأجهزة (SSE - فوري)
   static Future<bool> pushDevicesState(
       String shopId, List<Map<String, dynamic>> devicesState) async {
     return set(devicesStatePath(shopId), {
@@ -165,7 +174,25 @@ class FirebaseService {
     });
   }
 
-  /// رفع التربيزات
+  /// رفع حالة التربيزات (SSE - فوري) — جديد
+  static Future<bool> pushTablesState(
+      String shopId, List<Map<String, dynamic>> tables) async {
+    return set(tablesStatePath(shopId), {
+      'tables': tables,
+      'updated_at': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
+  /// رفع حالة تربيزات المشروبات (SSE - فوري) — جديد
+  static Future<bool> pushDrinkTablesState(
+      String shopId, List<Map<String, dynamic>> drinkTables) async {
+    return set(drinkTablesStatePath(shopId), {
+      'drink_tables': drinkTables,
+      'updated_at': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
+  /// رفع التربيزات — للتوافق القديم فقط (مش بيتبعت من sync_service)
   static Future<bool> pushTables(
       String shopId, List<Map<String, dynamic>> tables) async {
     return set(tablesPath(shopId), tables);
@@ -219,14 +246,13 @@ class FirebaseService {
   /// تحميل كل البيانات عند بداية التطبيق (مرة واحدة)
   static Future<Map<String, dynamic>?> pullAllData(String shopId) async {
     try {
-      // نشيل app_data القديم أول لو موجود للتوافق
       final oldData = await get(shopDataPath(shopId));
 
-      // نحمّل المسارات الجديدة بالتوازي
+      // نحمّل المسارات بالتوازي — التربيزات من realtime أو operational
       final results = await Future.wait([
         get(devicesStatePath(shopId)),
-        get(tablesPath(shopId)),
-        get(drinkTablesPath(shopId)),
+        get(tablesStatePath(shopId)),       // ← جديد: من realtime أولاً
+        get(drinkTablesStatePath(shopId)),  // ← جديد: من realtime أولاً
         get(staticDataPath(shopId)),
         get(historyPath(shopId)),
         get(dailySummaryPath(shopId)),
@@ -234,30 +260,32 @@ class FirebaseService {
         get(openShiftsPath(shopId)),
         get(debtsPath(shopId)),
         get(shopTournamentsPath(shopId)),
+        get(tablesPath(shopId)),            // ← fallback: operational
+        get(drinkTablesPath(shopId)),       // ← fallback: operational
       ]);
 
-      final devicesData = results[0];
-      final tablesData = results[1];
-      final drinkTablesData = results[2];
-      final staticData = results[3];
-      final historyData = results[4];
+      final devicesData      = results[0];
+      final tablesRealtime   = results[1];
+      final drinkRealtime    = results[2];
+      final staticData       = results[3];
+      final historyData      = results[4];
       final dailySummaryData = results[5];
       final shiftsHistoryData = results[6];
-      final openShiftsData = results[7];
-      final debtsData = results[8];
-      final tournamentsData = results[9];
+      final openShiftsData   = results[7];
+      final debtsData        = results[8];
+      final tournamentsData  = results[9];
+      final tablesOld        = results[10];
+      final drinkOld         = results[11];
 
-      // لو في بيانات جديدة، استخدمها — لو لأ، استخدم البيانات القديمة
       final hasNewData = staticData != null ||
           devicesData != null ||
-          tablesData != null;
+          tablesRealtime != null ||
+          tablesOld != null;
 
       if (!hasNewData && oldData != null && oldData is Map) {
-        // migrate من النظام القديم
         return _migrateOldData(Map<String, dynamic>.from(oldData));
       }
 
-      // بناء الـ map الموحد من المسارات المختلفة
       final combined = <String, dynamic>{};
 
       // الأجهزة
@@ -268,16 +296,22 @@ class FirebaseService {
         combined['devices_state'] = oldData['devices_state'] ?? [];
       }
 
-      // التربيزات
-      if (tablesData != null) {
-        combined['tables'] = tablesData is List ? tablesData : [];
+      // التربيزات — من realtime أولاً، لو مفيش fallback للـ operational
+      if (tablesRealtime != null && tablesRealtime is Map) {
+        final t = tablesRealtime['tables'];
+        combined['tables'] = (t != null && t is List) ? t : [];
+      } else if (tablesOld != null) {
+        combined['tables'] = tablesOld is List ? tablesOld : [];
       } else if (oldData != null && oldData is Map) {
         combined['tables'] = oldData['tables'] ?? [];
       }
 
-      if (drinkTablesData != null) {
-        combined['drink_tables'] =
-            drinkTablesData is List ? drinkTablesData : [];
+      // تربيزات المشروبات — من realtime أولاً، لو مفيش fallback للـ operational
+      if (drinkRealtime != null && drinkRealtime is Map) {
+        final d = drinkRealtime['drink_tables'];
+        combined['drink_tables'] = (d != null && d is List) ? d : [];
+      } else if (drinkOld != null) {
+        combined['drink_tables'] = drinkOld is List ? drinkOld : [];
       } else if (oldData != null && oldData is Map) {
         combined['drink_tables'] = oldData['drink_tables'] ?? [];
       }
@@ -388,13 +422,14 @@ class FirebaseService {
 
   static Map<String, dynamic> _migrateOldData(
       Map<String, dynamic> oldData) {
-    return oldData; // نرجعها زي ما هي، الـ _applyData هتتعامل معاها
+    return oldData;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // SSE Listener (للأجهزة اللحظية)
+  // SSE Listeners — الأجهزة والتربيزات والمشروبات كلها realtime
   // ═══════════════════════════════════════════════════════════════════════════
 
+  /// SSE للأجهزة
   static StreamSubscription<dynamic> listenToDevices(
     String shopId, {
     required void Function(List<Map<String, dynamic>> devices) onData,
@@ -411,6 +446,60 @@ class FirebaseService {
           try {
             final typed = devices
                 .map((d) => Map<String, dynamic>.from(d as Map))
+                .toList();
+            onData(typed);
+          } catch (_) {}
+        }
+      },
+      onError: onError,
+      retryDelay: retryDelay,
+    );
+  }
+
+  /// SSE للتربيزات (بنج/بلياردو) — جديد
+  static StreamSubscription<dynamic> listenToTables(
+    String shopId, {
+    required void Function(List<Map<String, dynamic>> tables) onData,
+    void Function(Object error)? onError,
+    Duration retryDelay = const Duration(seconds: 2),
+  }) {
+    return listen(
+      tablesStatePath(shopId),
+      onData: (data) {
+        if (data == null || data is! Map) return;
+        final tables = data['tables'];
+        if (tables == null) return;
+        if (tables is List) {
+          try {
+            final typed = tables
+                .map((t) => Map<String, dynamic>.from(t as Map))
+                .toList();
+            onData(typed);
+          } catch (_) {}
+        }
+      },
+      onError: onError,
+      retryDelay: retryDelay,
+    );
+  }
+
+  /// SSE لتربيزات المشروبات — جديد
+  static StreamSubscription<dynamic> listenToDrinkTables(
+    String shopId, {
+    required void Function(List<Map<String, dynamic>> drinkTables) onData,
+    void Function(Object error)? onError,
+    Duration retryDelay = const Duration(seconds: 2),
+  }) {
+    return listen(
+      drinkTablesStatePath(shopId),
+      onData: (data) {
+        if (data == null || data is! Map) return;
+        final drinkTables = data['drink_tables'];
+        if (drinkTables == null) return;
+        if (drinkTables is List) {
+          try {
+            final typed = drinkTables
+                .map((t) => Map<String, dynamic>.from(t as Map))
                 .toList();
             onData(typed);
           } catch (_) {}
