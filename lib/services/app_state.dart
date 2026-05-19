@@ -164,8 +164,18 @@ class AppState extends ChangeNotifier {
           _mergeRemoteDevices(remoteDevices);
           notifyListeners();
         },
+        // ← جديد
+        onRemoteTables: (remoteTables) {
+          _mergeRemoteTables(remoteTables);
+          notifyListeners();
+        },
+        // ← جديد
+        onRemoteDrinkTables: (remoteDrinkTables) {
+          _mergeRemoteDrinkTables(remoteDrinkTables);
+          notifyListeners();
+        },
         onRemoteOperational: (data) {
-          // تحديث التربيزات من polling
+          // فضل للتوافق بس مش هيتبعت SSE دلوقتي
           _mergeRemoteOperational(data);
           notifyListeners();
         },
@@ -221,6 +231,45 @@ class AppState extends ChangeNotifier {
         devices.add(newDevice);
         localIds.add(remoteId);
       }
+    }
+  }
+
+  /// دمج التربيزات الواردة من SSE
+  void _mergeRemoteTables(List<Map<String, dynamic>> remoteTables) {
+    if (remoteTables.isEmpty) return;
+
+    // لو المحل ده هو اللي بعت التحديث (من خلال push) تجاهل الـ SSE echo
+    // اتمرج بس التربيزات الفاضية — اللي شغالة محلياً تفضل زي ما هي
+    for (int i = 0; i < remoteTables.length; i++) {
+      if (i >= tables.length) {
+        tables.add(remoteTables[i]);
+        continue;
+      }
+      // لو التربيزة فاضية محلياً → اتحدث من الريموت
+      if (tables[i]['start_time'] == null) {
+        tables[i] = remoteTables[i];
+      }
+      // لو التربيزة شغالة محلياً → متلمسهاش (احنا اللي بنتحكم فيها)
+    }
+
+    // لو الريموت عنده تربيزات أقل → تجاهل (ممكن مشكلة في البيانات)
+  }
+
+  void _mergeRemoteDrinkTables(List<Map<String, dynamic>> remoteDrinkTables) {
+    if (remoteDrinkTables.isEmpty) return;
+
+    for (int i = 0; i < remoteDrinkTables.length; i++) {
+      if (i >= drinkTables.length) {
+        drinkTables.add(remoteDrinkTables[i]);
+        continue;
+      }
+      final localOrders =
+          Map<String, int>.from(drinkTables[i]['orders'] ?? {});
+      // لو التربيزة فاضية محلياً → اتحدث من الريموت
+      if (localOrders.isEmpty) {
+        drinkTables[i] = remoteDrinkTables[i];
+      }
+      // لو فيها طلبات محلية → متلمسهاش
     }
   }
 
