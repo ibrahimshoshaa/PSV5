@@ -7,6 +7,7 @@ import '../models/device.dart';
 import 'firebase_service.dart';
 import 'notification_service.dart';
 import '../services/shift_service.dart'; // ✅ [PATCH 1] import الشيفت سيرفس
+import 'sync_service.dart'; // ✅ تم إضافة الـ import الجديد الخاص بالـ SyncService
 
 class AppState extends ChangeNotifier {
   List<PSDevice> devices = [];
@@ -49,11 +50,10 @@ class AppState extends ChangeNotifier {
   bool isAdmin = false;
   bool isCashier = false;
   String shopName = 'ElHarifa PlayStation';
+  
   Timer? _clockTimer;
-  Timer? _syncTimer;
-  bool _archiving = false;
-  int _localTimestamp = 0;
-  bool _isSyncing = false;
+  SyncService? _sync;      // ✅ تم إضافة متغير الـ SyncService
+  bool archiving = false;  // ✅ تم تحويلها إلى public لتراها الـ SyncService وحذف المتغيرات القديمة الأخرى
 
   String? shopId;
   bool isActivated = false;
@@ -160,15 +160,20 @@ class AppState extends ChangeNotifier {
     saveData();
   }
 
- void _startSyncTimer() {
-  _syncTimer?.cancel();
-  _syncTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
-    if (!_archiving && shopId != null) {
-      await _syncToFirebase(); // ✅ push أولاً
-      await _syncFromFirebase(); // ✅ pull تاني
-    }
-  });
-}
+  // ✅ [PATCH 4] ميثود البدء الجديدة للـ SyncService
+  void _startSync() {
+    _sync?.dispose();
+    _sync = SyncService(
+      shopId: shopId!,
+      onRemoteData: (data) {
+        _applyData(data);
+        notifyListeners();
+      },
+      buildData: _buildDataDict,
+    );
+    _sync!.start();
+  }
+
   // ══════════════════════════════════════════════════════════════════════════
   // ACTIVATION SYSTEM
   // ══════════════════════════════════════════════════════════════════════════
@@ -197,8 +202,7 @@ class AppState extends ChangeNotifier {
         subscriptionActive = true;
         subscriptionExpiry = expiry;
         notifyListeners();
-        _startSyncTimer();
-        _syncFromFirebase();
+        _startSync(); // ✅ تم التعديل لاستخدام السيرفس الجديدة
         _checkSubscriptionOnline();
         return;
       }
@@ -255,8 +259,7 @@ class AppState extends ChangeNotifier {
       if (!isActivated) {
         await loadData();
       } else {
-        _startSyncTimer();
-        _syncFromFirebase();
+        _startSync(); // ✅ تم التعديل هنا أيضاً لاستخدام السيرفس الجديدة
       }
 
       notifyListeners();
@@ -270,7 +273,7 @@ class AppState extends ChangeNotifier {
           subscriptionActive = true;
           subscriptionExpiry = expiry;
           notifyListeners();
-          _startSyncTimer();
+          _startSync(); // ✅ تم التعديل للاستدعاء الجديد للسينك سيرفس
         }
       }
     }
@@ -312,18 +315,15 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  // ✅ [PATCH 6C] استبدال ميثود loadData بالكامل واستخدام محاذاة السينك سيرفس المحلية التلقائية
   Future<void> loadData() async {
     if (shopId == null) return;
-    final prefs = await SharedPreferences.getInstance();
-    final local = prefs.getString('app_data_$shopId');
+    final local = await SyncService.loadLocal(shopId!);
     if (local != null) {
-      final decoded = jsonDecode(local);
-      _applyData(decoded);
-      _localTimestamp = decoded['last_updated'] ?? 0;
+      _applyData(local);
       notifyListeners();
     }
-    await _syncFromFirebase();
-    _startSyncTimer();
+    _startSync();   // ← هيعمل pull أول حاجة تلقائياً
   }
 
   void _applyData(Map<String, dynamic> data) {
@@ -434,7 +434,7 @@ class AppState extends ChangeNotifier {
   }
 
   Map<String, dynamic> _buildDataDict() {
-    _localTimestamp = DateTime.now().millisecondsSinceEpoch;
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
     return {
       'history': history,
       'prices': prices,
@@ -456,45 +456,22 @@ class AppState extends ChangeNotifier {
       'shifts_history': shiftsHistory.map((s) => s.toJson()).toList(),
       'open_shifts': openShifts.map((k, v) => MapEntry(k, v.toJson())),
       'devices_state': devices.map((d) => d.toJson()).toList(),
-      'last_updated': _localTimestamp,
+      'last_updated': timestamp,
     };
   }
 
+  // ✅ [PATCH 5] استبدال ميثود saveData بالكامل للعمل بالتوافق اللامركزي الفوري
   Future<void> saveData() async {
     if (shopId == null) return;
     final data = _buildDataDict();
+
+    // حفظ محلي فوري — مش بننتظر Firebase
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('app_data_$shopId', jsonEncode(data));
-    await _syncToFirebase(data: data);
-  }
 
-  Future<void> _syncToFirebase({Map<String, dynamic>? data}) async {
-    if (shopId == null) return;
-    final payload = data ?? _buildDataDict();
-    await FirebaseService.set(FirebaseService.shopDataPath(shopId!), payload);
-  }
-
-  Future<void> _syncFromFirebase() async {
-    if (_archiving || shopId == null || _isSyncing) return;
-    _isSyncing = true;
-    try {
-      final data =
-          await FirebaseService.get(FirebaseService.shopDataPath(shopId!));
-      if (data == null) return;
-      final remoteTimestamp = data['last_updated'] ?? 0;
-      if (remoteTimestamp > _localTimestamp) {
-        _localTimestamp = remoteTimestamp;
-        _applyData(Map<String, dynamic>.from(data));
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString(
-            'app_data_$shopId', jsonEncode(data));
-        notifyListeners();
-      }
-    } catch (e) {
-      // ignore
-    } finally {
-      _isSyncing = false;
-    }
+    // أبلغ الـ SyncService إن في تحديث يحتاج يتبعت
+    _sync?.updateLocalTimestamp(data['last_updated'] as int);
+    _sync?.pushNow();        // fire-and-forget — الـ SyncService هيتولى الـ retry
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -699,8 +676,8 @@ class AppState extends ChangeNotifier {
 
   Map<String, dynamic> stopDevice(PSDevice d) {
     _logEvent(d, 'stop', note: 'انتهت الجلسة');
-   final timePrice = d.isActive ? d.calculateTimePrice(prices) : 0.0;
-final buffetPrice = d.getBuffetPrice(menu);
+    final timePrice = d.isActive ? d.calculateTimePrice(prices) : 0.0;
+    final buffetPrice = d.getBuffetPrice(menu);
     final elapsed = d.elapsedSeconds;
     final h = elapsed ~/ 3600;
     final m = (elapsed % 3600) ~/ 60;
@@ -806,9 +783,11 @@ final buffetPrice = d.getBuffetPrice(menu);
     notifyListeners();
   }
 
+  // ✅ [PATCH 8] تم دمج pause و resume السيرفس بداخل الأرشفة لحماية العمليات المتزامنة
   Future<bool> archiveAndClear() async {
     if (history.isEmpty || shopId == null) return false;
-    _archiving = true;
+    _sync?.pause();           // ← تم إضافة إيقاف مؤقت للسيرفس
+    archiving = true;
     try {
       final totalTime =
           history.fold(0.0, (s, h) => s + (h['time_cost'] ?? 0));
@@ -836,7 +815,8 @@ final buffetPrice = d.getBuffetPrice(menu);
     } catch (e) {
       return false;
     } finally {
-      _archiving = false;
+      archiving = false;
+      _sync?.resume();        // ← تم إضافة استئناف السيرفس بعد الانتهاء
     }
   }
 
@@ -1179,39 +1159,40 @@ final buffetPrice = d.getBuffetPrice(menu);
   }
 
   // ✅ login محدّث — بيدعم قائمة كاشيرين
- String? login(
-  String password, {
-  required String targetRole,
-  String? targetCashierName,
-}) {
-  final hash = hashPassword(password);
+  String? login(
+    String password, {
+    required String targetRole,
+    String? targetCashierName,
+  }) {
+    final hash = hashPassword(password);
 
-  if (targetRole == 'admin') {
-    if (hash == adminPasswordHash) {
-      isAdmin = true;
-      isCashier = false;
-      currentCashierName = null;
-      notifyListeners();
-      return 'admin';
-    }
-    return null;
-  }
-
-  if (targetRole == 'cashier' && targetCashierName != null) {
-    for (final c in cashiers) {
-      if (c['name'] == targetCashierName && c['hash'] == hash) {
-        isCashier = true;
-        isAdmin = false;
-        currentCashierName = c['name'] as String;
+    if (targetRole == 'admin') {
+      if (hash == adminPasswordHash) {
+        isAdmin = true;
+        isCashier = false;
+        currentCashierName = null;
         notifyListeners();
-        return 'cashier';
+        return 'admin';
       }
+      return null;
     }
+
+    if (targetRole == 'cashier' && targetCashierName != null) {
+      for (final c in cashiers) {
+        if (c['name'] == targetCashierName && c['hash'] == hash) {
+          isCashier = true;
+          isAdmin = false;
+          currentCashierName = c['name'] as String;
+          notifyListeners();
+          return 'cashier';
+        }
+      }
+      return null;
+    }
+
     return null;
   }
 
-  return null;
-}
   void logout() {
     isAdmin = false;
     isCashier = false;
@@ -1333,7 +1314,7 @@ final buffetPrice = d.getBuffetPrice(menu);
     saveData();
     notifyListeners();
   }
- void partialPayDebt(int index, double amount) {
+  void partialPayDebt(int index, double amount) {
     final current = (debts[index]['amount'] as num?)?.toDouble() ?? 0;
     final newAmount = (current - amount).clamp(0, double.infinity);
     if (newAmount <= 0) {
@@ -1459,11 +1440,12 @@ final buffetPrice = d.getBuffetPrice(menu);
     notifyListeners();
   }
 
+  // ✅ [PATCH 7] تم استبدال دالة ديسپوز القديمة وتعديلها لإرسال البيانات المعلقة فورا قبل الإغلاق والتنظيف
   @override
   void dispose() {
     _clockTimer?.cancel();
-    _syncTimer?.cancel();
-    if (shopId != null) _syncToFirebase();
+    _sync?.pushNow();   // بعت أي pending data قبل الإغلاق
+    _sync?.dispose();
     super.dispose();
   }
 }
