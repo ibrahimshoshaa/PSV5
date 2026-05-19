@@ -6,8 +6,8 @@ import 'package:crypto/crypto.dart';
 import '../models/device.dart';
 import 'firebase_service.dart';
 import 'notification_service.dart';
-import '../services/shift_service.dart'; // ✅ [PATCH 1] import الشيفت سيرفس
-import 'sync_service.dart'; // ✅ تم إضافة الـ import الجديد الخاص بالـ SyncService
+import '../services/shift_service.dart';
+import 'sync_service.dart';
 
 class AppState extends ChangeNotifier {
   List<PSDevice> devices = [];
@@ -33,27 +33,21 @@ class AppState extends ChangeNotifier {
   Map<String, int> inventory = {};
   Map<String, int> dailyInventorySummary = {};
 
-  // ✅ [PATCH 2] متغيرات الشيفت
-  // كل كاشير ليه شيفته — key = cashierName
   Map<String, ShiftRecord> openShifts = {};
   List<ShiftRecord> shiftsHistory = [];
 
   String adminPasswordHash = '';
-
-  // ✅ قائمة الكاشيرين — كل عنصر: { 'name': String, 'hash': String }
   List<Map<String, dynamic>> cashiers = [];
-
-  // الكاشير الحالي المسجّل دخوله
   String? currentCashierName;
 
   int numDevices = 0;
   bool isAdmin = false;
   bool isCashier = false;
   String shopName = 'ElHarifa PlayStation';
-  
+
   Timer? _clockTimer;
-  SyncService? _sync;      // ✅ تم إضافة متغير الـ SyncService
-  bool archiving = false;  // ✅ تم تحويلها إلى public لتراها الـ SyncService وحذف المتغيرات القديمة الأخرى
+  SyncService? _sync;
+  bool archiving = false;
 
   String? shopId;
   bool isActivated = false;
@@ -61,8 +55,6 @@ class AppState extends ChangeNotifier {
   DateTime? subscriptionExpiry;
 
   final Set<int> _alertedDevices = {};
-
-  // ✅ [COUNTDOWN] Set لتتبع الأجهزة اللي اتعمتلها إشعار انتهاء العد التنازلي
   final Set<int> _countdownAlertedDevices = {};
 
   bool get isLoggedIn => isAdmin || isCashier;
@@ -73,9 +65,9 @@ class AppState extends ChangeNotifier {
     return null;
   }
 
-  // ✅ [PATCH 5] getters مساعدة
   bool get hasOpenShift =>
-      currentCashierName != null && openShifts.containsKey(currentCashierName);
+      currentCashierName != null &&
+      openShifts.containsKey(currentCashierName);
 
   ShiftRecord? get currentShift =>
       currentCashierName != null ? openShifts[currentCashierName] : null;
@@ -86,17 +78,15 @@ class AppState extends ChangeNotifier {
   static const String _defaultAdminHash =
       '8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92';
 
-  // ✅ كاشير افتراضي واحد للتوافق مع النظام القديم
   static const String _defaultCashierHash =
       'ef797c8118f02dfb649607dd5d3f8c7623048c9c063d532cc95c5ed7a898a64f';
 
-  // للتوافق مع الكود القديم اللي بيستخدم cashierPasswordHash
   String get cashierPasswordHash =>
-      cashiers.isNotEmpty ? cashiers.first['hash'] as String : _defaultCashierHash;
+      cashiers.isNotEmpty
+          ? cashiers.first['hash'] as String
+          : _defaultCashierHash;
 
   Function(String deviceName, int minutes)? onTimerAlert;
-
-  // ✅ [COUNTDOWN] callback بيتبعت للـ dialog لما العد التنازلي ينتهي
   Function(PSDevice device)? onCountdownFinished;
 
   AppState() {
@@ -114,13 +104,17 @@ class AppState extends ChangeNotifier {
     return prices[key] ?? prices['match_ps4_normal'] ?? 10;
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // CLOCK
+  // ══════════════════════════════════════════════════════════════════════════
+
   void _startClock() {
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       for (var d in devices) {
         if (d.isActive) {
           d.updateTimer();
           _checkTimerAlert(d);
-          _checkCountdownAlert(d); // ✅ [COUNTDOWN] فحص العد التنازلي
+          _checkCountdownAlert(d);
         }
       }
       notifyListeners();
@@ -138,40 +132,140 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // ✅ [COUNTDOWN] بيتحقق لو العد التنازلي خلص ويبعت إشعار ويشغّل الـ callback
   void _checkCountdownAlert(PSDevice d) {
     if (!d.isCountdown || d.countdownTotalSeconds == null) return;
     if (d.countdownAlertSent) return;
     if (!d.countdownFinished) return;
 
-    // ضع العلامة على الـ device نفسه عشان منبعتش مرتين
     d.countdownAlertSent = true;
     _countdownAlertedDevices.add(d.id);
 
-    // إشعار محلي
     NotificationService.showTimerAlert(
       d.displayName,
       d.countdownTotalSeconds! ~/ 60,
     );
 
-    // callback للـ dialog / الـ UI
     onCountdownFinished?.call(d);
-
     saveData();
   }
 
-  // ✅ [PATCH 4] ميثود البدء الجديدة للـ SyncService
+  // ══════════════════════════════════════════════════════════════════════════
+  // SYNC — يستخدم SyncService الجديد مع المسارات المنفصلة
+  // ══════════════════════════════════════════════════════════════════════════
+
   void _startSync() {
     _sync?.dispose();
     _sync = SyncService(
       shopId: shopId!,
-      onRemoteData: (data) {
-        _applyData(data);
-        notifyListeners();
-      },
-      buildData: _buildDataDict,
+      callbacks: SyncCallbacks(
+        // ── callbacks الاستقبال ──────────────────────────────────────────
+        onRemoteDevices: (remoteDevices) {
+          // تحديث الأجهزة من SSE — بس الأجهزة المتاحة (غير الشغالة على هذا الجهاز)
+          _mergeRemoteDevices(remoteDevices);
+          notifyListeners();
+        },
+        onRemoteOperational: (data) {
+          // تحديث التربيزات من polling
+          _mergeRemoteOperational(data);
+          notifyListeners();
+        },
+        // ── builders — بيبنوا الـ payload لكل نوع ──────────────────────
+        buildDevicesState: () => devices.map((d) => d.toJson()).toList(),
+        buildTables: () => tables,
+        buildDrinkTables: () => drinkTables,
+        buildStaticData: _buildStaticData,
+        buildHistory: () => history,
+        buildOpenShifts: () =>
+            openShifts.map((k, v) => MapEntry(k, v.toJson())),
+        buildShiftsHistory: () =>
+            shiftsHistory.map((s) => s.toJson()).toList(),
+        buildDebts: () => debts,
+        buildTournaments: () => tournaments,
+      ),
     );
     _sync!.start();
+  }
+
+  /// دمج حالة الأجهزة الواردة من SSE — بيحدّث بس الأجهزة اللي مش شغالة على الموبايل ده
+  void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
+    if (remoteDevices.isEmpty) return;
+
+    // حافظ على الأجهزة الشغالة محلياً (مش هنبدّلها بالريموت)
+    final localActiveIds =
+        devices.where((d) => d.isActive).map((d) => d.id).toSet();
+
+    // لو في جهاز جديد في الريموت مش موجود محلياً، أضفه
+    final localIds = devices.map((d) => d.id).toSet();
+
+    for (final remoteJson in remoteDevices) {
+      final remoteId = (remoteJson['id'] as num?)?.toInt() ?? 0;
+
+      if (localActiveIds.contains(remoteId)) {
+        // الجهاز ده شغال محلياً — ما نلمسهوش
+        continue;
+      }
+
+      if (localIds.contains(remoteId)) {
+        // جهاز موجود محلياً بس مش شغال — حدّث حالته
+        final idx = devices.indexWhere((d) => d.id == remoteId);
+        if (idx != -1) {
+          final updated =
+              PSDevice.fromJson(remoteJson, remoteId);
+          updated.updateTimer();
+          devices[idx] = updated;
+        }
+      } else {
+        // جهاز جديد — أضفه
+        final newDevice = PSDevice.fromJson(remoteJson, remoteId);
+        newDevice.updateTimer();
+        devices.add(newDevice);
+        localIds.add(remoteId);
+      }
+    }
+  }
+
+  /// دمج التربيزات الواردة من polling
+  void _mergeRemoteOperational(Map<String, dynamic> data) {
+    if (data.containsKey('tables') && data['tables'] != null) {
+      final remoteTables = data['tables'];
+      if (remoteTables is List) {
+        // حدّث التربيزات الفاضية فقط — اللي شغالة خليها
+        final updatedTables = remoteTables
+            .map((t) => Map<String, dynamic>.from(t as Map))
+            .toList();
+        for (int i = 0; i < updatedTables.length && i < tables.length; i++) {
+          if (tables[i]['start_time'] == null) {
+            // تربيزة فاضية — خد الريموت
+            tables[i] = updatedTables[i];
+          }
+        }
+        // لو في تربيزات جديدة في الريموت
+        if (updatedTables.length > tables.length) {
+          tables.addAll(
+              updatedTables.sublist(tables.length));
+        }
+      }
+    }
+
+    if (data.containsKey('drink_tables') && data['drink_tables'] != null) {
+      final remoteDrink = data['drink_tables'];
+      if (remoteDrink is List) {
+        final updatedDrink = remoteDrink
+            .map((t) => Map<String, dynamic>.from(t as Map))
+            .toList();
+        // تربيزات مشروبات — حدّث الفاضية بس
+        for (int i = 0; i < updatedDrink.length && i < drinkTables.length; i++) {
+          final localOrders =
+              Map<String, int>.from(drinkTables[i]['orders'] ?? {});
+          if (localOrders.isEmpty) {
+            drinkTables[i] = updatedDrink[i];
+          }
+        }
+        if (updatedDrink.length > drinkTables.length) {
+          drinkTables.addAll(updatedDrink.sublist(drinkTables.length));
+        }
+      }
+    }
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -189,9 +283,11 @@ class AppState extends ChangeNotifier {
 
     shopId = savedId;
 
-    final localData = prefs.getString('app_data_$savedId');
+    // تحميل local cache أول
+    final localData = await SyncService.loadLocal(savedId);
     if (localData != null) {
-      _applyData(jsonDecode(localData));
+      _applyData(localData);
+      notifyListeners();
     }
 
     final cachedExpiry = prefs.getString('sub_expires_$savedId');
@@ -202,7 +298,7 @@ class AppState extends ChangeNotifier {
         subscriptionActive = true;
         subscriptionExpiry = expiry;
         notifyListeners();
-        _startSync(); // ✅ تم التعديل لاستخدام السيرفس الجديدة
+        _startSync();
         _checkSubscriptionOnline();
         return;
       }
@@ -255,13 +351,7 @@ class AppState extends ChangeNotifier {
 
       isActivated = true;
       subscriptionActive = true;
-
-      if (!isActivated) {
-        await loadData();
-      } else {
-        _startSync(); // ✅ تم التعديل هنا أيضاً لاستخدام السيرفس الجديدة
-      }
-
+      _startSync();
       notifyListeners();
     } catch (_) {
       final prefs = await SharedPreferences.getInstance();
@@ -273,7 +363,7 @@ class AppState extends ChangeNotifier {
           subscriptionActive = true;
           subscriptionExpiry = expiry;
           notifyListeners();
-          _startSync(); // ✅ تم التعديل للاستدعاء الجديد للسينك سيرفس
+          _startSync();
         }
       }
     }
@@ -315,77 +405,114 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // ✅ [PATCH 6C] استبدال ميثود loadData بالكامل واستخدام محاذاة السينك سيرفس المحلية التلقائية
   Future<void> loadData() async {
     if (shopId == null) return;
+
+    // أول حاجة: local cache
     final local = await SyncService.loadLocal(shopId!);
     if (local != null) {
       _applyData(local);
       notifyListeners();
     }
-    _startSync();   // ← هيعمل pull أول حاجة تلقائياً
+
+    // تاني حاجة: pull من Firebase بالمسارات الجديدة
+    try {
+      final remoteData =
+          await FirebaseService.pullAllData(shopId!);
+      if (remoteData != null) {
+        _applyData(remoteData);
+        await SyncService.saveLocal(shopId!, remoteData);
+        notifyListeners();
+      }
+    } catch (_) {}
+
+    // ابدأ الـ sync المستمر
+    _startSync();
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // APPLY DATA — بيطبّق الداتا على الـ state
+  // ══════════════════════════════════════════════════════════════════════════
+
   void _applyData(Map<String, dynamic> data) {
-    history = List<Map<String, dynamic>>.from(data['history'] ?? []);
-    if (data['prices'] != null) {
-      final raw = Map<String, dynamic>.from(data['prices']);
-      if (raw.containsKey('match_price') &&
-          !raw.containsKey('match_ps4_normal')) {
-        final old = (raw['match_price'] as num).toInt();
-        raw['match_ps4_normal'] = old;
-        raw['match_ps4_multi'] = (old * 1.5).round();
-        raw['match_ps5_normal'] = (old * 1.5).round();
-        raw['match_ps5_multi'] = (old * 2).round();
-        raw.remove('match_price');
-      }
-      if (raw.containsKey('normal') && !raw.containsKey('ps4_normal')) {
-        prices = {
-          'ps4_normal': raw['normal'] ?? 25,
-          'ps4_multi': raw['multi'] ?? 35,
-          'ps5_normal': 40,
-          'ps5_multi': 50,
-          'match_ps4_normal': raw['match_ps4_normal'] ?? 10,
-          'match_ps4_multi': raw['match_ps4_multi'] ?? 15,
-          'match_ps5_normal': raw['match_ps5_normal'] ?? 15,
-          'match_ps5_multi': raw['match_ps5_multi'] ?? 20,
-        };
-      } else {
-        prices = raw.map((k, v) => MapEntry(k, (v as num).toInt()));
-        prices.putIfAbsent('match_ps4_normal', () => 10);
-        prices.putIfAbsent('match_ps4_multi', () => 15);
-        prices.putIfAbsent('match_ps5_normal', () => 15);
-        prices.putIfAbsent('match_ps5_multi', () => 20);
-      }
+    // ── History ──────────────────────────────────────────────────────────
+    if (data['history'] != null) {
+      history = List<Map<String, dynamic>>.from(
+          (data['history'] as List)
+              .map((h) => Map<String, dynamic>.from(h)));
     }
-    menu = Map<String, int>.from(data['menu'] ?? {});
-    inventory = Map<String, int>.from(data['inventory'] ?? {});
-    dailyInventorySummary =
-        Map<String, int>.from(data['daily_inventory_summary'] ?? {});
-    debts = List<Map<String, dynamic>>.from(
-        (data['debts'] as List? ?? [])
-            .map((d) => Map<String, dynamic>.from(d)));
 
-    if (data['tables'] != null) {
+    // ── Prices ───────────────────────────────────────────────────────────
+    final pricesRaw = data['prices'] ?? data['static']?['prices'];
+    if (pricesRaw != null) {
+      final raw = Map<String, dynamic>.from(pricesRaw);
+      _migratePrices(raw);
+    }
+
+    // ── Menu & Inventory ──────────────────────────────────────────────────
+    final menuRaw = data['menu'] ?? data['static']?['menu'];
+    if (menuRaw != null) {
+      menu = Map<String, int>.from(menuRaw);
+    }
+
+    final inventoryRaw =
+        data['inventory'] ?? data['static']?['inventory'];
+    if (inventoryRaw != null) {
+      inventory = Map<String, int>.from(inventoryRaw);
+    }
+
+    final summaryRaw = data['daily_inventory_summary'] ??
+        data['daily_summary'];
+    if (summaryRaw != null) {
+      dailyInventorySummary = Map<String, int>.from(summaryRaw);
+    }
+
+    // ── Debts ─────────────────────────────────────────────────────────────
+    final debtsRaw = data['debts'] ?? data['static']?['debts'];
+    if (debtsRaw != null) {
+      debts = List<Map<String, dynamic>>.from(
+          (debtsRaw as List).map((d) => Map<String, dynamic>.from(d)));
+    }
+
+    // ── Tables ────────────────────────────────────────────────────────────
+    final tablesRaw =
+        data['tables'] ?? data['operational']?['tables'];
+    if (tablesRaw != null) {
       tables = List<Map<String, dynamic>>.from(
-          (data['tables'] as List)
+          (tablesRaw as List)
               .map((t) => Map<String, dynamic>.from(t)));
     }
-    if (data['drink_tables'] != null) {
-      drinkTables = List<Map<String, dynamic>>.from(
-          (data['drink_tables'] as List)
-              .map((t) => Map<String, dynamic>.from(t)));
-    }
-    numDevices = data['num_devices'] ?? 0;
-    adminPasswordHash = data['admin_password_hash'] ?? adminPasswordHash;
 
-    // ✅ تحميل قائمة الكاشيرين مع التوافق مع النظام القديم
-    if (data['cashiers'] != null) {
+    final drinkRaw =
+        data['drink_tables'] ?? data['operational']?['drink_tables'];
+    if (drinkRaw != null) {
+      drinkTables = List<Map<String, dynamic>>.from(
+          (drinkRaw as List)
+              .map((t) => Map<String, dynamic>.from(t)));
+    }
+
+    // ── Settings / Static ─────────────────────────────────────────────────
+    final settingsRaw = data['static']?['settings'];
+    final adminHash = data['admin_password_hash'] ??
+        settingsRaw?['admin_password_hash'];
+    if (adminHash != null) adminPasswordHash = adminHash;
+
+    final shopNameRaw =
+        data['shop_name'] ?? settingsRaw?['shop_name'];
+    if (shopNameRaw != null) shopName = shopNameRaw;
+
+    final matchEnabledRaw =
+        data['match_enabled'] ?? settingsRaw?['match_enabled'];
+    if (matchEnabledRaw != null) matchEnabled = matchEnabledRaw;
+
+    // ── Cashiers ──────────────────────────────────────────────────────────
+    final cashiersRaw =
+        data['cashiers'] ?? data['static']?['cashiers'];
+    if (cashiersRaw != null) {
       cashiers = List<Map<String, dynamic>>.from(
-          (data['cashiers'] as List)
+          (cashiersRaw as List)
               .map((c) => Map<String, dynamic>.from(c)));
     } else if (data['cashier_password_hash'] != null) {
-      // migration من كاشير واحد
       cashiers = [
         {
           'name': 'كاشير 1',
@@ -399,42 +526,95 @@ class AppState extends ChangeNotifier {
       ];
     }
 
-    shopName = data['shop_name'] ?? shopName;
-    matchEnabled = data['match_enabled'] ?? true;
-    if (data['tournaments'] != null) {
+    // ── Tournaments ───────────────────────────────────────────────────────
+    final tournamentsRaw = data['tournaments'];
+    if (tournamentsRaw != null) {
       tournaments = List<Map<String, dynamic>>.from(
-          (data['tournaments'] as List)
+          (tournamentsRaw as List)
               .map((t) => Map<String, dynamic>.from(t)));
     }
 
-    // ✅ [PATCH 3] تحميل بيانات الشيفتات
-    if (data['shifts_history'] != null) {
+    // ── Shifts ────────────────────────────────────────────────────────────
+    final shiftsHistoryRaw =
+        data['shifts_history'] ?? data['records']?['shifts_history'];
+    if (shiftsHistoryRaw != null) {
       shiftsHistory = List<ShiftRecord>.from(
-        (data['shifts_history'] as List).map(
-          (s) => ShiftRecord.fromJson(Map<String, dynamic>.from(s)),
+        (shiftsHistoryRaw as List).map(
+          (s) => ShiftRecord.fromJson(
+              Map<String, dynamic>.from(s)),
         ),
       );
     }
-    if (data['open_shifts'] != null) {
-      final raw = Map<String, dynamic>.from(data['open_shifts']);
-      openShifts = raw.map((k, v) =>
-          MapEntry(k, ShiftRecord.fromJson(Map<String, dynamic>.from(v))));
+
+    final openShiftsRaw =
+        data['open_shifts'] ?? data['records']?['open_shifts'];
+    if (openShiftsRaw != null) {
+      final raw = Map<String, dynamic>.from(openShiftsRaw);
+      openShifts = raw.map((k, v) => MapEntry(
+          k, ShiftRecord.fromJson(Map<String, dynamic>.from(v))));
     }
 
-    final devStates = data['devices_state'] as List? ?? [];
-    devices = [];
-    for (int i = 0; i < devStates.length; i++) {
-      devices.add(
-          PSDevice.fromJson(Map<String, dynamic>.from(devStates[i]), i + 1));
+    // ── Devices ───────────────────────────────────────────────────────────
+    // من المسار الجديد: realtime/devices_state → { devices: [...] }
+    List? devStates;
+    if (data['realtime']?['devices_state']?['devices'] != null) {
+      devStates = data['realtime']['devices_state']['devices'] as List;
+    } else if (data['devices_state'] != null) {
+      devStates = data['devices_state'] as List;
+    } else if (data['devices'] != null) {
+      devStates = data['devices'] as List;
     }
-    numDevices = devices.length;
-    for (var d in devices) {
-      d.updateTimer();
+
+    if (devStates != null) {
+      devices = [];
+      for (int i = 0; i < devStates.length; i++) {
+        devices.add(PSDevice.fromJson(
+            Map<String, dynamic>.from(devStates[i]), i + 1));
+      }
+      numDevices = devices.length;
+      for (var d in devices) {
+        d.updateTimer();
+      }
+    }
+
+    numDevices = data['num_devices'] ?? devices.length;
+  }
+
+  void _migratePrices(Map<String, dynamic> raw) {
+    if (raw.containsKey('match_price') &&
+        !raw.containsKey('match_ps4_normal')) {
+      final old = (raw['match_price'] as num).toInt();
+      raw['match_ps4_normal'] = old;
+      raw['match_ps4_multi'] = (old * 1.5).round();
+      raw['match_ps5_normal'] = (old * 1.5).round();
+      raw['match_ps5_multi'] = (old * 2).round();
+      raw.remove('match_price');
+    }
+    if (raw.containsKey('normal') && !raw.containsKey('ps4_normal')) {
+      prices = {
+        'ps4_normal': raw['normal'] ?? 25,
+        'ps4_multi': raw['multi'] ?? 35,
+        'ps5_normal': 40,
+        'ps5_multi': 50,
+        'match_ps4_normal': raw['match_ps4_normal'] ?? 10,
+        'match_ps4_multi': raw['match_ps4_multi'] ?? 15,
+        'match_ps5_normal': raw['match_ps5_normal'] ?? 15,
+        'match_ps5_multi': raw['match_ps5_multi'] ?? 20,
+      };
+    } else {
+      prices = raw.map((k, v) => MapEntry(k, (v as num).toInt()));
+      prices.putIfAbsent('match_ps4_normal', () => 10);
+      prices.putIfAbsent('match_ps4_multi', () => 15);
+      prices.putIfAbsent('match_ps5_normal', () => 15);
+      prices.putIfAbsent('match_ps5_multi', () => 20);
     }
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // BUILD DATA — بيبني الـ payload المحلي الشامل (للـ local cache)
+  // ══════════════════════════════════════════════════════════════════════════
+
   Map<String, dynamic> _buildDataDict() {
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
     return {
       'history': history,
       'prices': prices,
@@ -447,38 +627,81 @@ class AppState extends ChangeNotifier {
       'num_devices': numDevices,
       'admin_password_hash': adminPasswordHash,
       'cashiers': cashiers,
-      // للتوافق مع الكود القديم
       'cashier_password_hash': cashierPasswordHash,
       'shop_name': shopName,
       'match_enabled': matchEnabled,
       'tournaments': tournaments,
-      // ✅ [PATCH 4] حفظ بيانات الشيفتات
       'shifts_history': shiftsHistory.map((s) => s.toJson()).toList(),
-      'open_shifts': openShifts.map((k, v) => MapEntry(k, v.toJson())),
+      'open_shifts':
+          openShifts.map((k, v) => MapEntry(k, v.toJson())),
       'devices_state': devices.map((d) => d.toJson()).toList(),
-      'last_updated': timestamp,
+      'last_updated': DateTime.now().millisecondsSinceEpoch,
     };
   }
 
-  // ✅ [PATCH 5] استبدال ميثود saveData بالكامل للعمل بالتوافق اللامركزي الفوري
-  Future<void> saveData() async {
-    if (shopId == null) return;
-    final data = _buildDataDict();
-
-    // حفظ محلي فوري — مش بننتظر Firebase
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('app_data_$shopId', jsonEncode(data));
-
-    // أبلغ الـ SyncService إن في تحديث يحتاج يتبعت
-    _sync?.updateLocalTimestamp(data['last_updated'] as int);
-    _sync?.pushNow();        // fire-and-forget — الـ SyncService هيتولى الـ retry
+  Map<String, dynamic> _buildStaticData() {
+    return {
+      'prices': prices,
+      'menu': menu,
+      'inventory': inventory,
+      'daily_inventory_summary': dailyInventorySummary,
+      'cashiers': cashiers,
+      'cashier_password_hash': cashierPasswordHash,
+      'settings': {
+        'admin_password_hash': adminPasswordHash,
+        'shop_name': shopName,
+        'match_enabled': matchEnabled,
+        'num_devices': numDevices,
+      },
+      'debts': debts,
+    };
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // ✅ CASHIER MANAGEMENT
+  // SAVE DATA — بيحفظ محلياً ويبعت للـ Firebase حسب نوع البيانات
   // ══════════════════════════════════════════════════════════════════════════
 
-  /// إضافة كاشير جديد
+  Future<void> saveData() async {
+    if (shopId == null) return;
+
+    // حفظ محلي شامل
+    final data = _buildDataDict();
+    await SyncService.saveLocal(shopId!, data);
+
+    // بعد ما نحفظ محلياً، نبعت للـ SyncService
+    // (هو بيتولى الإرسال للـ Firebase بالمسارات الصح)
+    _sync?.schedulePushStatic();
+  }
+
+  /// بعت حالة الأجهزة فوراً (بيتبعت بعد كل تغيير في الأجهزة)
+  Future<void> _saveDevices() async {
+    if (shopId == null) return;
+    final data = _buildDataDict();
+    await SyncService.saveLocal(shopId!, data);
+    await _sync?.pushDevices();
+  }
+
+  /// بعت التربيزات (بيتبعت بعد كل تغيير في التربيزات)
+  void _saveTables() {
+    if (shopId == null) return;
+    _buildDataDict().let((data) async {
+      await SyncService.saveLocal(shopId!, data);
+    });
+    _sync?.schedulePushTables();
+  }
+
+  /// بعت السجلات فوراً (بعد إنهاء جلسة)
+  Future<void> _saveHistory() async {
+    if (shopId == null) return;
+    final data = _buildDataDict();
+    await SyncService.saveLocal(shopId!, data);
+    await _sync?.pushHistory();
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // CASHIER MANAGEMENT
+  // ══════════════════════════════════════════════════════════════════════════
+
   void addCashier(String name, String password) {
     cashiers.add({
       'name': name.trim(),
@@ -488,38 +711,35 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// حذف كاشير بالـ index
   void removeCashier(int index) {
-    if (cashiers.length <= 1) return; // لازم يفضل كاشير واحد على الأقل
+    if (cashiers.length <= 1) return;
     cashiers.removeAt(index);
     saveData();
     notifyListeners();
   }
 
-  /// تعديل اسم كاشير
   void updateCashierName(int index, String name) {
     cashiers[index]['name'] = name.trim();
     saveData();
     notifyListeners();
   }
 
-  /// تغيير باسورد كاشير
   void updateCashierPassword(int index, String newPassword) {
     cashiers[index]['hash'] = hashPassword(newPassword);
     saveData();
     notifyListeners();
   }
 
-  // ─── Session Logging Helper ────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  // SESSION LOG
+  // ══════════════════════════════════════════════════════════════════════════
 
   void _logEvent(PSDevice d, String type,
       {String? note, int? minutes}) {
     final now = DateTime.now();
     final timeStr =
         '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
-    final role = isAdmin
-        ? 'أدمن'
-        : (currentCashierName ?? 'كاشير');
+    final role = isAdmin ? 'أدمن' : (currentCashierName ?? 'كاشير');
     d.sessionLog.add({
       'type': type,
       'time': timeStr,
@@ -530,9 +750,10 @@ class AppState extends ChangeNotifier {
     });
   }
 
-  // ─── Device Actions ────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  // DEVICE ACTIONS
+  // ══════════════════════════════════════════════════════════════════════════
 
-  // ✅ [COUNTDOWN] startDevice معدّل — بيقبل countdownSeconds اختياري
   void startDevice(PSDevice d, String mode, {int? countdownSeconds}) {
     d.mode = mode;
     d.status = 'شغال';
@@ -542,7 +763,6 @@ class AppState extends ChangeNotifier {
     d.orders = {};
     d.sessionLog = [];
 
-    // ✅ إعداد العد التنازلي لو اتبعتلنا وقت
     if (countdownSeconds != null && countdownSeconds > 0) {
       d.isCountdown = true;
       d.countdownTotalSeconds = countdownSeconds;
@@ -559,7 +779,7 @@ class AppState extends ChangeNotifier {
     }
 
     _alertedDevices.remove(d.id);
-    saveData();
+    _saveDevices(); // فوري للأجهزة
     notifyListeners();
   }
 
@@ -578,7 +798,7 @@ class AppState extends ChangeNotifier {
           DateTime.now().millisecondsSinceEpoch ~/ 1000;
       _logEvent(d, 'pause', note: 'إيقاف مؤقت');
     }
-    saveData();
+    _saveDevices();
     notifyListeners();
   }
 
@@ -600,7 +820,7 @@ class AppState extends ChangeNotifier {
       'cashier': currentCashierName ?? (isAdmin ? 'أدمن' : 'كاشير'),
     };
     history.add(record);
-    saveData();
+    _saveHistory();
     notifyListeners();
   }
 
@@ -624,7 +844,7 @@ class AppState extends ChangeNotifier {
       'cashier': currentCashierName ?? (isAdmin ? 'أدمن' : 'كاشير'),
     };
     history.add(record);
-    saveData();
+    _saveHistory();
     notifyListeners();
   }
 
@@ -643,14 +863,14 @@ class AppState extends ChangeNotifier {
         ? 'أضاف $minutes دقيقة ($role)'
         : 'خصم ${minutes.abs()} دقيقة ($role)';
     _logEvent(d, 'add_time', note: action, minutes: minutes);
-    saveData();
+    _saveDevices();
     notifyListeners();
   }
 
   void setDeviceTimer(PSDevice d, int? minutes) {
     d.timerAlertMinutes = minutes;
     if (minutes == null) _alertedDevices.remove(d.id);
-    saveData();
+    _saveDevices();
     notifyListeners();
   }
 
@@ -663,14 +883,13 @@ class AppState extends ChangeNotifier {
     d.orders = {};
     d.timerText = '00:00:00';
     d.timerAlertMinutes = null;
-    // ✅ [COUNTDOWN] reset حقول العد التنازلي
     d.isCountdown = false;
     d.countdownTotalSeconds = null;
     d.countdownAlertSent = false;
     d.sessionLog = [];
     _alertedDevices.remove(d.id);
     _countdownAlertedDevices.remove(d.id);
-    saveData();
+    _saveDevices();
     notifyListeners();
   }
 
@@ -696,7 +915,6 @@ class AppState extends ChangeNotifier {
       'date': DateTime.now().toString(),
       'session_log': List<Map<String, dynamic>>.from(d.sessionLog),
       'cashier': currentCashierName ?? (isAdmin ? 'أدمن' : 'كاشير'),
-      // ✅ [COUNTDOWN] حفظ نوع الجلسة في السجل
       if (d.isCountdown) 'was_countdown': true,
       if (d.countdownTotalSeconds != null)
         'countdown_total_seconds': d.countdownTotalSeconds,
@@ -706,6 +924,7 @@ class AppState extends ChangeNotifier {
       _deductFromInventory(item, qty);
     });
     history.add(record);
+
     d.status = 'متاح';
     d.startTime = null;
     d.addedSeconds = 0;
@@ -714,14 +933,16 @@ class AppState extends ChangeNotifier {
     d.orders = {};
     d.timerText = '00:00:00';
     d.timerAlertMinutes = null;
-    // ✅ [COUNTDOWN] reset حقول العد التنازلي
     d.isCountdown = false;
     d.countdownTotalSeconds = null;
     d.countdownAlertSent = false;
     d.sessionLog = [];
     _alertedDevices.remove(d.id);
     _countdownAlertedDevices.remove(d.id);
-    saveData();
+
+    // بعت الأجهزة والـ history معاً
+    _saveDevices();
+    _saveHistory();
     notifyListeners();
     return record;
   }
@@ -740,7 +961,7 @@ class AppState extends ChangeNotifier {
     }
     d.orders[item] = (d.orders[item] ?? 0) + qty;
     if (d.orders[item]! <= 0) d.orders.remove(item);
-    saveData();
+    _saveDevices();
     notifyListeners();
     return null;
   }
@@ -757,7 +978,6 @@ class AppState extends ChangeNotifier {
     to.timerAlertMinutes = from.timerAlertMinutes;
     to.sessionLog =
         List<Map<String, dynamic>>.from(from.sessionLog);
-    // ✅ [COUNTDOWN] نقل حالة العد التنازلي مع الجلسة
     to.isCountdown = from.isCountdown;
     to.countdownTotalSeconds = from.countdownTotalSeconds;
     to.countdownAlertSent = from.countdownAlertSent;
@@ -779,14 +999,13 @@ class AppState extends ChangeNotifier {
     _alertedDevices.remove(from.id);
     _countdownAlertedDevices.remove(from.id);
 
-    saveData();
+    _saveDevices();
     notifyListeners();
   }
 
-  // ✅ [PATCH 8] تم دمج pause و resume السيرفس بداخل الأرشفة لحماية العمليات المتزامنة
   Future<bool> archiveAndClear() async {
     if (history.isEmpty || shopId == null) return false;
-    _sync?.pause();           // ← تم إضافة إيقاف مؤقت للسيرفس
+    _sync?.pause();
     archiving = true;
     try {
       final totalTime =
@@ -804,23 +1023,26 @@ class AppState extends ChangeNotifier {
       for (int i = 0; i < 3 && result == null; i++) {
         result = await FirebaseService.push(
             FirebaseService.shopArchivePath(shopId!), archive);
-        if (result == null)
+        if (result == null) {
           await Future.delayed(const Duration(seconds: 1));
+        }
       }
       if (result == null) return false;
       history.clear();
-      await saveData();
+      await _saveHistory();
       notifyListeners();
       return true;
     } catch (e) {
       return false;
     } finally {
       archiving = false;
-      _sync?.resume();        // ← تم إضافة استئناف السيرفس بعد الانتهاء
+      _sync?.resume();
     }
   }
 
-  // ─── Device Management ─────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  // DEVICE MANAGEMENT
+  // ══════════════════════════════════════════════════════════════════════════
 
   void addDevice(String name, String type) {
     final id = devices.length + 1;
@@ -855,7 +1077,9 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ─── Table Actions ─────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  // TABLE ACTIONS
+  // ══════════════════════════════════════════════════════════════════════════
 
   void addTable(String name, int ratePerHour,
       {String tableType = 'ping', int gamePrice = 0}) {
@@ -895,16 +1119,15 @@ class AppState extends ChangeNotifier {
     tables[index]['is_paused'] = false;
     tables[index]['pause_start_time'] = null;
     tables[index]['orders'] = <String, int>{};
-    saveData();
+    _saveTables();
     notifyListeners();
   }
 
   void toggleTablePause(int index) {
     final t = tables[index];
     if (t['is_paused'] == true) {
-      final paused =
-          (DateTime.now().millisecondsSinceEpoch ~/ 1000) -
-              (t['pause_start_time'] ?? 0);
+      final paused = (DateTime.now().millisecondsSinceEpoch ~/ 1000) -
+          (t['pause_start_time'] ?? 0);
       t['start_time'] = (t['start_time'] ?? 0) + paused;
       t['is_paused'] = false;
       t['pause_start_time'] = null;
@@ -913,7 +1136,7 @@ class AppState extends ChangeNotifier {
       t['pause_start_time'] =
           DateTime.now().millisecondsSinceEpoch ~/ 1000;
     }
-    saveData();
+    _saveTables();
     notifyListeners();
   }
 
@@ -922,7 +1145,7 @@ class AppState extends ChangeNotifier {
     tables[index]['is_paused'] = false;
     tables[index]['pause_start_time'] = null;
     tables[index]['orders'] = <String, int>{};
-    saveData();
+    _saveTables();
     notifyListeners();
   }
 
@@ -944,8 +1167,7 @@ class AppState extends ChangeNotifier {
     final Map<String, int> orders =
         Map<String, int>.from(t['orders'] ?? {});
     double buffetCost = 0;
-    orders.forEach(
-        (item, qty) => buffetCost += qty * (menu[item] ?? 0));
+    orders.forEach((item, qty) => buffetCost += qty * (menu[item] ?? 0));
 
     final h = elapsed ~/ 3600;
     final m = (elapsed % 3600) ~/ 60;
@@ -974,7 +1196,9 @@ class AppState extends ChangeNotifier {
     tables[index]['is_paused'] = false;
     tables[index]['pause_start_time'] = null;
     tables[index]['orders'] = <String, int>{};
-    saveData();
+
+    _saveTables();
+    _saveHistory();
     notifyListeners();
     return record;
   }
@@ -982,21 +1206,21 @@ class AppState extends ChangeNotifier {
   String? addTableOrder(int index, String item, int qty) {
     if (qty > 0) {
       final available = inventory[item];
-      if (available != null && available <= 0)
+      if (available != null && available <= 0) {
         return 'نفد "$item" من المخزن!';
-      final orders =
-          Map<String, int>.from(tables[index]['orders'] ?? {});
+      }
+      final orders = Map<String, int>.from(tables[index]['orders'] ?? {});
       final currentInOrder = orders[item] ?? 0;
       final totalNeeded = currentInOrder + qty;
-      if (available != null && totalNeeded > available)
+      if (available != null && totalNeeded > available) {
         return 'الكمية المتاحة هي $available فقط!';
+      }
     }
-    final orders =
-        Map<String, int>.from(tables[index]['orders'] ?? {});
+    final orders = Map<String, int>.from(tables[index]['orders'] ?? {});
     orders[item] = (orders[item] ?? 0) + qty;
     if (orders[item]! <= 0) orders.remove(item);
     tables[index]['orders'] = orders;
-    saveData();
+    _saveTables();
     notifyListeners();
     return null;
   }
@@ -1011,7 +1235,9 @@ class AppState extends ChangeNotifier {
     return (DateTime.now().millisecondsSinceEpoch ~/ 1000) - startTime;
   }
 
-  // ─── Drink Tables ──────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  // DRINK TABLES
+  // ══════════════════════════════════════════════════════════════════════════
 
   void addDrinkTable(String name) {
     drinkTables.add({'name': name, 'orders': <String, int>{}});
@@ -1034,21 +1260,23 @@ class AppState extends ChangeNotifier {
   String? addDrinkTableOrder(int index, String item, int qty) {
     if (qty > 0) {
       final available = inventory[item];
-      if (available != null && available <= 0)
+      if (available != null && available <= 0) {
         return 'نفد "$item" من المخزن!';
+      }
       final orders =
           Map<String, int>.from(drinkTables[index]['orders'] ?? {});
       final currentInOrder = orders[item] ?? 0;
       final totalNeeded = currentInOrder + qty;
-      if (available != null && totalNeeded > available)
+      if (available != null && totalNeeded > available) {
         return 'الكمية المتاحة هي $available فقط!';
+      }
     }
     final orders =
         Map<String, int>.from(drinkTables[index]['orders'] ?? {});
     orders[item] = (orders[item] ?? 0) + qty;
     if (orders[item]! <= 0) orders.remove(item);
     drinkTables[index]['orders'] = orders;
-    saveData();
+    _saveTables();
     notifyListeners();
     return null;
   }
@@ -1082,7 +1310,9 @@ class AppState extends ChangeNotifier {
     });
     history.add(record);
     drinkTables[index]['orders'] = <String, int>{};
-    saveData();
+
+    _saveTables();
+    _saveHistory();
     notifyListeners();
     return record;
   }
@@ -1106,7 +1336,8 @@ class AppState extends ChangeNotifier {
       device.orders[item] = (device.orders[item] ?? 0) + qty;
     });
     drinkTables[drinkIndex]['orders'] = <String, int>{};
-    saveData();
+    _saveTables();
+    _saveDevices();
     notifyListeners();
   }
 
@@ -1120,18 +1351,19 @@ class AppState extends ChangeNotifier {
       t['is_paused'] = false;
       t['pause_start_time'] = null;
     }
-    final existing =
-        Map<String, int>.from(t['orders'] ?? {});
+    final existing = Map<String, int>.from(t['orders'] ?? {});
     orders.forEach((item, qty) {
       existing[item] = (existing[item] ?? 0) + qty;
     });
     tables[tableIndex]['orders'] = existing;
     drinkTables[drinkIndex]['orders'] = <String, int>{};
-    saveData();
+    _saveTables();
     notifyListeners();
   }
 
-  // ─── Menu & Auth & Inventory ───────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  // MENU & INVENTORY
+  // ══════════════════════════════════════════════════════════════════════════
 
   void addMenuItem(String name, int price) {
     menu[name] = price;
@@ -1152,13 +1384,48 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _deductFromInventory(String item, int qty) {
+    if (inventory.containsKey(item)) {
+      inventory[item] = (inventory[item]! - qty).clamp(0, 99999);
+    }
+    dailyInventorySummary[item] =
+        (dailyInventorySummary[item] ?? 0) + qty;
+  }
+
+  void addInventory(String item, int qty) {
+    inventory[item] = (inventory[item] ?? 0) + qty;
+    saveData();
+    notifyListeners();
+  }
+
+  void setInventoryItem(String item, int qty) {
+    inventory[item] = qty;
+    saveData();
+    notifyListeners();
+  }
+
+  void resetInventoryItem(String item) {
+    inventory[item] = 0;
+    saveData();
+    notifyListeners();
+  }
+
+  void resetDailySummary() {
+    dailyInventorySummary.clear();
+    saveData();
+    notifyListeners();
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // AUTH
+  // ══════════════════════════════════════════════════════════════════════════
+
   void updateShopName(String name) {
     shopName = name;
     saveData();
     notifyListeners();
   }
 
-  // ✅ login محدّث — بيدعم قائمة كاشيرين
   String? login(
     String password, {
     required String targetRole,
@@ -1205,7 +1472,6 @@ class AppState extends ChangeNotifier {
     saveData();
   }
 
-  // للتوافق مع الكود القديم — بيغير باسورد أول كاشير
   void changeCashierPassword(String newPass) {
     if (cashiers.isNotEmpty) {
       cashiers[0]['hash'] = hashPassword(newPass);
@@ -1231,34 +1497,9 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _deductFromInventory(String item, int qty) {
-    if (inventory.containsKey(item)) {
-      inventory[item] =
-          (inventory[item]! - qty).clamp(0, 99999);
-    }
-    dailyInventorySummary[item] =
-        (dailyInventorySummary[item] ?? 0) + qty;
-  }
-
-  void addInventory(String item, int qty) {
-    inventory[item] = (inventory[item] ?? 0) + qty;
-    saveData();
-    notifyListeners();
-  }
-
-  void setInventoryItem(String item, int qty) {
-    inventory[item] = qty;
-    saveData();
-    notifyListeners();
-  }
-
-  void resetInventoryItem(String item) {
-    inventory[item] = 0;
-    saveData();
-    notifyListeners();
-  }
-
-  // ─── Debts ────────────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  // DEBTS
+  // ══════════════════════════════════════════════════════════════════════════
 
   void addDebt(String name, double amount, String date, {String? note}) {
     debts.add({
@@ -1274,23 +1515,21 @@ class AppState extends ChangeNotifier {
     saveData();
     notifyListeners();
   }
+
   void addToDebt(int index, double amount, {String? note}) {
     final current = (debts[index]['amount'] as num?)?.toDouble() ?? 0;
     debts[index]['amount'] = current + amount;
-    debts[index]['paid'] = false; // لو كانت مسددة وأضاف عليها
- 
-    // سجل الحركة في payment_history
-    final history = List<Map<String, dynamic>>.from(
+    debts[index]['paid'] = false;
+    final h = List<Map<String, dynamic>>.from(
         debts[index]['payment_history'] as List? ?? []);
-    history.add({
+    h.add({
       'type': 'add',
       'amount': amount,
       'note': note,
       'date': DateTime.now().toString(),
       'by': currentCashierName ?? (isAdmin ? 'أدمن' : 'كاشير'),
     });
-    debts[index]['payment_history'] = history;
- 
+    debts[index]['payment_history'] = h;
     saveData();
     notifyListeners();
   }
@@ -1298,22 +1537,20 @@ class AppState extends ChangeNotifier {
   void markDebtPaid(int index) {
     final amount = (debts[index]['amount'] as num?)?.toDouble() ?? 0;
     debts[index]['paid'] = true;
- 
-    // سجل الحركة
-    final history = List<Map<String, dynamic>>.from(
+    final h = List<Map<String, dynamic>>.from(
         debts[index]['payment_history'] as List? ?? []);
-    history.add({
+    h.add({
       'type': 'pay',
       'amount': amount,
       'date': DateTime.now().toString(),
       'by': currentCashierName ?? (isAdmin ? 'أدمن' : 'كاشير'),
-      });
-    debts[index]['payment_history'] = history;
+    });
+    debts[index]['payment_history'] = h;
     debts[index]['amount'] = 0.0;
- 
     saveData();
     notifyListeners();
   }
+
   void partialPayDebt(int index, double amount) {
     final current = (debts[index]['amount'] as num?)?.toDouble() ?? 0;
     final newAmount = (current - amount).clamp(0, double.infinity);
@@ -1324,36 +1561,29 @@ class AppState extends ChangeNotifier {
       debts[index]['amount'] = newAmount;
     }
     debts[index]['last_partial_pay'] = DateTime.now().toString();
- 
-    // سجل الحركة في payment_history
-    final history = List<Map<String, dynamic>>.from(
+    final h = List<Map<String, dynamic>>.from(
         debts[index]['payment_history'] as List? ?? []);
-    history.add({
+    h.add({
       'type': 'pay',
       'amount': amount,
       'date': DateTime.now().toString(),
       'by': currentCashierName ?? (isAdmin ? 'أدمن' : 'كاشير'),
     });
-    debts[index]['payment_history'] = history;
- 
+    debts[index]['payment_history'] = h;
     saveData();
     notifyListeners();
   }
+
   void deleteDebt(int index) {
     debts.removeAt(index);
     saveData();
     notifyListeners();
   }
 
-  void resetDailySummary() {
-    dailyInventorySummary.clear();
-    saveData();
-    notifyListeners();
-  }
+  // ══════════════════════════════════════════════════════════════════════════
+  // TOURNAMENTS
+  // ══════════════════════════════════════════════════════════════════════════
 
-  // ─── Tournaments ───────────────────────────────────────────────────────────
-
-  /// إضافة بطولة جديدة — بترجع الـ key (index) بتاعها
   int addTournament(Map<String, dynamic> tournament) {
     tournaments.add(Map<String, dynamic>.from(tournament));
     saveData();
@@ -1361,7 +1591,6 @@ class AppState extends ChangeNotifier {
     return tournaments.length - 1;
   }
 
-  /// تحديث بطولة موجودة بالـ index
   void updateTournament(int index, Map<String, dynamic> data) {
     if (index < 0 || index >= tournaments.length) return;
     tournaments[index] = Map<String, dynamic>.from(data);
@@ -1369,7 +1598,6 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// حذف بطولة بالـ index
   void deleteTournament(int index) {
     if (index < 0 || index >= tournaments.length) return;
     tournaments.removeAt(index);
@@ -1378,10 +1606,9 @@ class AppState extends ChangeNotifier {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // ✅ [PATCH 5] SHIFT MANAGEMENT
+  // SHIFT MANAGEMENT
   // ══════════════════════════════════════════════════════════════════════════
 
-  // ─── بداية الشيفت ──────────────────────────────────────────────────────────
   void startShift(String cashierName) {
     openShifts[cashierName] = ShiftRecord(
       cashierName: cashierName,
@@ -1392,15 +1619,15 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ─── إنهاء الشيفت ──────────────────────────────────────────────────────────
   Future<ShiftRecord?> endShift() async {
     final cashierName = currentCashierName;
-    if (cashierName == null || !openShifts.containsKey(cashierName)) return null;
+    if (cashierName == null || !openShifts.containsKey(cashierName)) {
+      return null;
+    }
 
     final shift = openShifts[cashierName]!;
     final shiftStart = shift.startTime;
 
-    // فلتر الـ history بالجلسات اللي بعد بداية الشيفت وبإسم الكاشير
     final shiftTransactions = history.where((h) {
       final date = DateTime.tryParse(h['date']?.toString() ?? '');
       if (date == null) return false;
@@ -1419,33 +1646,37 @@ class AppState extends ChangeNotifier {
 
     shiftsHistory.add(closedShift);
     openShifts.remove(cashierName);
-    await saveData();
 
-    // ── sync الشيفتات لـ Firebase ────────────────────────────────────────────
-    if (shopId != null) {
-      await FirebaseService.set(
-        'shops/$shopId/shifts',
-        shiftsHistory.map((s) => s.toJson()).toList(),
-      );
-    }
+    // بعت الشيفتات للـ SyncService
+    final data = _buildDataDict();
+    await SyncService.saveLocal(shopId!, data);
+    _sync?.schedulePushShifts();
 
     notifyListeners();
     return closedShift;
   }
 
-  // ─── مسح كل تقارير الشيفتات ────────────────────────────────────────────────
   void clearShiftsHistory() {
     shiftsHistory.clear();
     saveData();
     notifyListeners();
   }
 
-  // ✅ [PATCH 7] تم استبدال دالة ديسپوز القديمة وتعديلها لإرسال البيانات المعلقة فورا قبل الإغلاق والتنظيف
+  // ══════════════════════════════════════════════════════════════════════════
+  // DISPOSE
+  // ══════════════════════════════════════════════════════════════════════════
+
   @override
   void dispose() {
     _clockTimer?.cancel();
-    _sync?.pushNow();   // بعت أي pending data قبل الإغلاق
+    _sync?.flushAll(); // بعت أي pending data قبل الإغلاق
     _sync?.dispose();
     super.dispose();
   }
+}
+
+// ── Helper extension ──────────────────────────────────────────────────────────
+
+extension _LetExt<T> on T {
+  R let<R>(R Function(T) block) => block(this);
 }
