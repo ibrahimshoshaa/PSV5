@@ -1,14 +1,15 @@
 // lib/services/sync_service.dart
 //
-// طبقة المزامنة الجديدة — مقسّمة حسب نوع البيانات
+// طبقة المزامنة — مقسّمة حسب نوع البيانات
 // ═══════════════════════════════════════════════════
 //
 // الاستراتيجيات:
-//   1. الأجهزة        → SSE (فوري من Firebase) + push عند كل تغيير
-//   2. التربيزات      → push عند التغيير + pull كل 3 ثواني
-//   3. البيانات الثابتة → push عند التعديل فقط
-//   4. السجلات        → push عند الإضافة فقط (append)
-//   5. المديونيات     → push عند التغيير
+//   1. الأجهزة          → SSE (فوري من Firebase) + push عند كل تغيير
+//   2. التربيزات        → SSE (فوري من Firebase) + push عند كل تغيير ← تغيّر
+//   3. تربيزات مشروبات  → SSE (فوري من Firebase) + push عند كل تغيير ← تغيّر
+//   4. البيانات الثابتة → push عند التعديل فقط
+//   5. السجلات          → push عند الإضافة فقط (append)
+//   6. المديونيات       → push عند التغيير
 
 import 'dart:async';
 import 'dart:convert';
@@ -25,8 +26,11 @@ class SyncCallbacks {
   /// بيتبعت لما تيجي حالة أجهزة جديدة من Firebase
   final void Function(List<Map<String, dynamic>> devices) onRemoteDevices;
 
-  /// بيتبعت لما تيجي بيانات تشغيلية جديدة (تربيزات)
-  final void Function(DataMap data) onRemoteOperational;
+  /// بيتبعت لما تيجي حالة تربيزات جديدة من Firebase (SSE) ← جديد
+  final void Function(List<Map<String, dynamic>> tables) onRemoteTables;
+
+  /// بيتبعت لما تيجي حالة تربيزات مشروبات جديدة من Firebase (SSE) ← جديد
+  final void Function(List<Map<String, dynamic>> drinkTables) onRemoteDrinkTables;
 
   /// بناء بيانات الأجهزة للرفع
   final List<Map<String, dynamic>> Function() buildDevicesState;
@@ -53,7 +57,8 @@ class SyncCallbacks {
 
   const SyncCallbacks({
     required this.onRemoteDevices,
-    required this.onRemoteOperational,
+    required this.onRemoteTables,
+    required this.onRemoteDrinkTables,
     required this.buildDevicesState,
     required this.buildTables,
     required this.buildDrinkTables,
@@ -67,7 +72,7 @@ class SyncCallbacks {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SyncService الجديد
+// SyncService
 // ═══════════════════════════════════════════════════════════════════════════════
 
 class SyncService {
@@ -75,17 +80,18 @@ class SyncService {
   final SyncCallbacks callbacks;
 
   // ── Timers ────────────────────────────────────────────────────────────────
-  Timer? _operationalTimer; // polling للتربيزات كل 3 ثواني
-  Timer? _debounceTimer;    // debounce للـ push
+  Timer? _debounceTimer;
 
-  // ── SSE subscription للأجهزة ──────────────────────────────────────────────
+  // ── SSE subscriptions ─────────────────────────────────────────────────────
   StreamSubscription? _devicesSSE;
+  StreamSubscription? _tablesSSE;      // ← جديد
+  StreamSubscription? _drinkTablesSSE; // ← جديد
 
   // ── حالة ──────────────────────────────────────────────────────────────────
   bool _paused = false;
   bool _disposed = false;
 
-  // ── pending flags — بيتحددوا لما في تغيير محتاج يتبعت ──────────────────
+  // ── pending flags ──────────────────────────────────────────────────────────
   bool _pendingDevices = false;
   bool _pendingTables = false;
   bool _pendingStatic = false;
@@ -105,7 +111,8 @@ class SyncService {
 
   void start() {
     _startDevicesSSE();
-    _startOperationalPolling();
+    _startTablesSSE();      // ← جديد بدل الـ polling
+    _startDrinkTablesSSE(); // ← جديد بدل الـ polling
   }
 
   void pause() => _paused = true;
@@ -118,7 +125,8 @@ class SyncService {
   void dispose() {
     _disposed = true;
     _devicesSSE?.cancel();
-    _operationalTimer?.cancel();
+    _tablesSSE?.cancel();      // ← جديد
+    _drinkTablesSSE?.cancel(); // ← جديد
     _debounceTimer?.cancel();
   }
 
@@ -134,45 +142,43 @@ class SyncService {
         if (_disposed || _paused) return;
         callbacks.onRemoteDevices(devices);
       },
-      onError: (_) {
-        // لو SSE انقطع، هيحاول يتوصل تاني تلقائياً
-      },
+      onError: (_) {},
       retryDelay: const Duration(seconds: 2),
     );
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // Polling للتربيزات — كل 3 ثواني
+  // SSE للتربيزات — فوري (بدل polling كل 3 ثواني) ← جديد
   // ═══════════════════════════════════════════════════════════════════════════
 
-  void _startOperationalPolling() {
-    _operationalTimer?.cancel();
-    _operationalTimer = Timer.periodic(
-      const Duration(seconds: 3),
-      (_) => _pullOperational(),
+  void _startTablesSSE() {
+    _tablesSSE?.cancel();
+    _tablesSSE = FirebaseService.listenToTables(
+      shopId,
+      onData: (tables) {
+        if (_disposed || _paused) return;
+        callbacks.onRemoteTables(tables);
+      },
+      onError: (_) {},
+      retryDelay: const Duration(seconds: 2),
     );
   }
 
-  Future<void> _pullOperational() async {
-    if (_paused || _disposed) return;
-    try {
-      final results = await Future.wait([
-        FirebaseService.get(FirebaseService.tablesPath(shopId)),
-        FirebaseService.get(FirebaseService.drinkTablesPath(shopId)),
-      ]);
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SSE لتربيزات المشروبات — فوري (بدل polling كل 3 ثواني) ← جديد
+  // ═══════════════════════════════════════════════════════════════════════════
 
-      final tablesData = results[0];
-      final drinkTablesData = results[1];
-
-      final operational = <String, dynamic>{};
-      if (tablesData != null) operational['tables'] = tablesData;
-      if (drinkTablesData != null)
-        operational['drink_tables'] = drinkTablesData;
-
-      if (operational.isNotEmpty) {
-        callbacks.onRemoteOperational(operational);
-      }
-    } catch (_) {}
+  void _startDrinkTablesSSE() {
+    _drinkTablesSSE?.cancel();
+    _drinkTablesSSE = FirebaseService.listenToDrinkTables(
+      shopId,
+      onData: (drinkTables) {
+        if (_disposed || _paused) return;
+        callbacks.onRemoteDrinkTables(drinkTables);
+      },
+      onError: (_) {},
+      retryDelay: const Duration(seconds: 2),
+    );
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -195,13 +201,13 @@ class SyncService {
     }
   }
 
-  /// التربيزات — مع debounce 500ms
+  /// التربيزات — فورية عبر SSE (مع debounce 500ms للـ push) ← تغيّر
   void schedulePushTables() {
     _pendingTables = true;
     _scheduleDebounce();
   }
 
-  /// البيانات الثابتة — مع debounce 1 ثانية
+  /// البيانات الثابتة — مع debounce
   void schedulePushStatic() {
     _pendingStatic = true;
     _scheduleDebounce();
@@ -267,13 +273,14 @@ class SyncService {
 
   // ─── Internal Push ────────────────────────────────────────────────────────
 
+  /// بيرفع التربيزات على مسار الـ realtime (SSE) ← تغيّر
   Future<void> _pushTables() async {
     if (_paused || _disposed) return;
     _pendingTables = false;
     try {
       await Future.wait([
-        FirebaseService.pushTables(shopId, callbacks.buildTables()),
-        FirebaseService.pushDrinkTables(
+        FirebaseService.pushTablesState(shopId, callbacks.buildTables()),
+        FirebaseService.pushDrinkTablesState(
             shopId, callbacks.buildDrinkTables()),
       ]);
     } catch (_) {
