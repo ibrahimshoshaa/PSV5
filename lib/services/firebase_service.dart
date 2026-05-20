@@ -511,6 +511,25 @@ class FirebaseService {
     );
   }
 
+  static StreamSubscription<dynamic> listenToStatic(
+  String shopId, {
+  required void Function(Map<String, dynamic> data) onData,
+  void Function(Object error)? onError,
+  Duration retryDelay = const Duration(seconds: 2),
+}) {
+  return listen(
+    staticDataPath(shopId),
+    onData: (data) {
+      if (data == null || data is! Map) return;
+      try {
+        onData(Map<String, dynamic>.from(data));
+      } catch (_) {}
+    },
+    onError: onError,
+    retryDelay: retryDelay,
+  );
+}
+
   // ═══════════════════════════════════════════════════════════════════════════
   // Real-time SSE Listener (عام)
   // ═══════════════════════════════════════════════════════════════════════════
