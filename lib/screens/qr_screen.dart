@@ -23,21 +23,20 @@ class QrScreen extends StatelessWidget {
 
   // ── روابط URL ────────────────────────────────────────────────────────────
 
-  static String buildDeviceUrl(String shopId, int deviceId) {
-  final encodedId = base64Url.encode(utf8.encode(shopId));
+ static String buildDeviceUrl(String shopId, int deviceId) {
+  final encodedId = base64Url.encode(utf8.encode(shopId)).replaceAll('=', '');
   return 'https://ps-harifa.web.app/?s=$encodedId&d=$deviceId';
 }
 
 static String buildTableUrl(String shopId, int tableIndex) {
-  final encodedId = base64Url.encode(utf8.encode(shopId));
+  final encodedId = base64Url.encode(utf8.encode(shopId)).replaceAll('=', '');
   return 'https://ps-harifa.web.app/?s=$encodedId&t=$tableIndex';
 }
 
 static String buildDrinkTableUrl(String shopId, int drinkTableIndex) {
-  final encodedId = base64Url.encode(utf8.encode(shopId));
+  final encodedId = base64Url.encode(utf8.encode(shopId)).replaceAll('=', '');
   return 'https://ps-harifa.web.app/?s=$encodedId&dt=$drinkTableIndex';
 }
-
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
