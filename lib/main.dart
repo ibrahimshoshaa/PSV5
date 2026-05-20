@@ -8,6 +8,7 @@ import 'screens/cashier_screen.dart';
 import 'screens/customer_orders_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/shift_screen.dart';
+import 'screens/dashboard_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
