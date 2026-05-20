@@ -1552,6 +1552,17 @@ void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
       inventory[item] = (inventory[item]! - qty).clamp(0, 99999);
     }
     dailyInventorySummary[item] = (dailyInventorySummary[item] ?? 0) + qty;
+    // ✅ بعت الـ inventory محدّث فوراً للـ Firebase
+    if (shopId != null) {
+      FirebaseService.set(
+        FirebaseService.inventoryPath(shopId!),
+        inventory,
+      );
+      FirebaseService.set(
+        FirebaseService.dailySummaryPath(shopId!),
+        dailyInventorySummary,
+      );
+    }
   }
 
   void addInventory(String item, int qty) {
