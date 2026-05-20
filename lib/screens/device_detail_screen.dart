@@ -153,12 +153,12 @@ class DeviceDetailScreen extends StatelessWidget {
               _StartButtons(device: device),
             ],
             const SizedBox(height: 16),
-_BuffetSection(device: device),
-// NEW — زرار الإنهاء يظهر لو في طلبات حتى لو الجهاز مش شغال
 if (device.isActive || device.orders.isNotEmpty) ...[
   const SizedBox(height: 16),
   _StopButton(device: device),
 ],
+const SizedBox(height: 16),
+_BuffetSection(device: device),
           ],
         ),
       ),
