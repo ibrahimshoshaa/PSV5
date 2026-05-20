@@ -170,6 +170,10 @@ class AppState extends ChangeNotifier {
           _mergeRemoteDrinkTables(remoteDrinkTables);
           notifyListeners();
         },
+        onRemoteStatic: (data) {
+  _applyStaticData(data);
+  notifyListeners();
+},
         buildDevicesState: () => devices.map((d) => d.toJson()).toList(),
         buildTables: () => tables,
         buildDrinkTables: () => drinkTables,
@@ -241,6 +245,34 @@ void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
       }
     }
   }
+  void _applyStaticData(Map<String, dynamic> s) {
+  if (s['prices'] != null) {
+    _migratePrices(Map<String, dynamic>.from(s['prices']));
+  }
+  if (s['menu'] != null) {
+    menu = Map<String, int>.from(s['menu']);
+  }
+  if (s['inventory'] != null) {
+    inventory = Map<String, int>.from(s['inventory']);
+  }
+  if (s['cashiers'] != null) {
+    cashiers = List<Map<String, dynamic>>.from(
+        (s['cashiers'] as List).map((c) => Map<String, dynamic>.from(c)));
+  }
+  if (s['admin_password_hash'] != null) {
+    adminPasswordHash = s['admin_password_hash'];
+  }
+  if (s['shop_name'] != null) {
+    shopName = s['shop_name'];
+  }
+  if (s['match_enabled'] != null) {
+    matchEnabled = s['match_enabled'];
+  }
+  if (s['debts'] != null) {
+    debts = List<Map<String, dynamic>>.from(
+        (s['debts'] as List).map((d) => Map<String, dynamic>.from(d)));
+  }
+}
 
   void _mergeRemoteOperational(Map<String, dynamic> data) {
     if (data.containsKey('tables') && data['tables'] != null) {
