@@ -186,36 +186,29 @@ class AppState extends ChangeNotifier {
     _sync!.start();
   }
 
-  void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
-    if (remoteDevices.isEmpty) return;
+ void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
+  if (remoteDevices.isEmpty) return;
 
-    final localActiveIds =
-        devices.where((d) => d.isActive).map((d) => d.id).toSet();
+  final localIds = devices.map((d) => d.id).toSet();
 
-    final localIds = devices.map((d) => d.id).toSet();
+  for (final remoteJson in remoteDevices) {
+    final remoteId = (remoteJson['id'] as num?)?.toInt() ?? 0;
 
-    for (final remoteJson in remoteDevices) {
-      final remoteId = (remoteJson['id'] as num?)?.toInt() ?? 0;
-
-      if (localActiveIds.contains(remoteId)) {
-        continue;
+    if (localIds.contains(remoteId)) {
+      final idx = devices.indexWhere((d) => d.id == remoteId);
+      if (idx != -1) {
+        final updated = PSDevice.fromJson(remoteJson, remoteId);
+        updated.updateTimer();
+        devices[idx] = updated;
       }
-
-      if (localIds.contains(remoteId)) {
-        final idx = devices.indexWhere((d) => d.id == remoteId);
-        if (idx != -1) {
-          final updated = PSDevice.fromJson(remoteJson, remoteId);
-          updated.updateTimer();
-          devices[idx] = updated;
-        }
-      } else {
-        final newDevice = PSDevice.fromJson(remoteJson, remoteId);
-        newDevice.updateTimer();
-        devices.add(newDevice);
-        localIds.add(remoteId);
-      }
+    } else {
+      final newDevice = PSDevice.fromJson(remoteJson, remoteId);
+      newDevice.updateTimer();
+      devices.add(newDevice);
+      localIds.add(remoteId);
     }
   }
+}
 
   void _mergeRemoteTables(List<Map<String, dynamic>> remoteTables) {
     if (remoteTables.isEmpty) return;
