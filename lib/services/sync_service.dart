@@ -31,6 +31,7 @@ class SyncCallbacks {
 
   /// بيتبعت لما تيجي حالة تربيزات مشروبات جديدة من Firebase (SSE) ← جديد
   final void Function(List<Map<String, dynamic>> drinkTables) onRemoteDrinkTables;
+  final void Function(Map<String, dynamic> data) onRemoteStatic;
 
   /// بناء بيانات الأجهزة للرفع
   final List<Map<String, dynamic>> Function() buildDevicesState;
@@ -68,6 +69,7 @@ class SyncCallbacks {
     required this.buildShiftsHistory,
     required this.buildDebts,
     required this.buildTournaments,
+    required this.onRemoteStatic,
   });
 }
 
@@ -85,8 +87,9 @@ class SyncService {
   // ── SSE subscriptions ─────────────────────────────────────────────────────
   StreamSubscription? _devicesSSE;
   StreamSubscription? _tablesSSE;      // ← جديد
-  StreamSubscription? _drinkTablesSSE; // ← جديد
-
+  StreamSubscription? _drinkTablesSSE; // ← 
+  جديد
+  StreamSubscription? _staticSSE;
   // ── حالة ──────────────────────────────────────────────────────────────────
   bool _paused = false;
   bool _disposed = false;
@@ -109,11 +112,12 @@ class SyncService {
   // Start / Stop
   // ═══════════════════════════════════════════════════════════════════════════
 
-  void start() {
-    _startDevicesSSE();
-    _startTablesSSE();      // ← جديد بدل الـ polling
-    _startDrinkTablesSSE(); // ← جديد بدل الـ polling
-  }
+ void start() {
+  _startDevicesSSE();
+  _startTablesSSE();
+  _startDrinkTablesSSE();
+  _startStaticSSE();
+}
 
   void pause() => _paused = true;
 
@@ -122,13 +126,14 @@ class SyncService {
     _flushPending();
   }
 
-  void dispose() {
-    _disposed = true;
-    _devicesSSE?.cancel();
-    _tablesSSE?.cancel();      // ← جديد
-    _drinkTablesSSE?.cancel(); // ← جديد
-    _debounceTimer?.cancel();
-  }
+ void dispose() {
+  _disposed = true;
+  _devicesSSE?.cancel();
+  _tablesSSE?.cancel();
+  _drinkTablesSSE?.cancel();
+  _staticSSE?.cancel();
+  _debounceTimer?.cancel();
+}
 
   // ═══════════════════════════════════════════════════════════════════════════
   // SSE للأجهزة — فوري
@@ -180,6 +185,19 @@ class SyncService {
       retryDelay: const Duration(seconds: 2),
     );
   }
+
+  void _startStaticSSE() {
+  _staticSSE?.cancel();
+  _staticSSE = FirebaseService.listenToStatic(
+    shopId,
+    onData: (data) {
+      if (_disposed || _paused) return;
+      callbacks.onRemoteStatic(data);
+    },
+    onError: (_) {},
+    retryDelay: const Duration(seconds: 2),
+  );
+}
 
   // ═══════════════════════════════════════════════════════════════════════════
   // Push Methods — بيتبعتوا من AppState عند التغيير
