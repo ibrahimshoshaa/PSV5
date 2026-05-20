@@ -1049,9 +1049,9 @@ if (s['match_enabled'] != null) {
     _countdownAlertedDevices.remove(d.id);
     _lockingDevices.add(d.id); // ✅ قفل مؤقت
     _saveDevices().then((_) {
-      Future.delayed(const Duration(seconds: 2), () {
-        _lockingDevices.remove(d.id);
-      });
+     Future.delayed(const Duration(seconds: 5), () {
+  _lockingDevices.remove(d.id);
+});
     });
     notifyListeners();
   }
@@ -1116,9 +1116,9 @@ if (s['match_enabled'] != null) {
     _saveDevices().then((_) {
       // بعد ما الـ push وصل لـ Firebase، الـ SSE هيجي بالحالة الصح
       // نستنى ثانيتين عشان الـ SSE يتحدث ثم نشيل القفل
-      Future.delayed(const Duration(seconds: 2), () {
-        _lockingDevices.remove(d.id);
-      });
+     Future.delayed(const Duration(seconds: 5), () {
+  _lockingDevices.remove(d.id);
+});
     });
     _saveHistory();
     notifyListeners();
