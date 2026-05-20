@@ -59,7 +59,7 @@ class DrinkTableScreen extends StatelessWidget {
               ),
             ),
           ),
-          if (orders.isNotEmpty)
+        if (orders.isNotEmpty && !state.isAdmin)
             IconButton(
               icon: const Icon(Icons.swap_horiz, color: Colors.white70),
               tooltip: 'نقل الطلبات',
@@ -134,11 +134,10 @@ class DrinkTableScreen extends StatelessWidget {
                                           fontSize: 12)),
                                 ]),
                           ),
-                          IconButton(
-                            icon: const Icon(
-                                Icons.remove_circle_outline,
+                         IconButton(
+                            icon: const Icon(Icons.remove_circle_outline,
                                 color: Colors.red),
-                            onPressed: qty > 0
+                            onPressed: qty > 0 && !state.isAdmin
                                 ? () => state.addDrinkTableOrder(
                                     tableIndex, e.key, -1)
                                 : null,
@@ -151,11 +150,10 @@ class DrinkTableScreen extends StatelessWidget {
                                     fontSize: 18,
                                     fontWeight: FontWeight.bold)),
                           ),
-                          IconButton(
-                            icon: const Icon(
-                                Icons.add_circle_outline,
+                      IconButton(
+                            icon: const Icon(Icons.add_circle_outline,
                                 color: Color(0xFF4ade80)),
-                            onPressed: () {
+                            onPressed: state.isAdmin ? null : () {
                               final err = state.addDrinkTableOrder(
                                   tableIndex, e.key, 1);
                               if (err != null) {
@@ -184,7 +182,8 @@ class DrinkTableScreen extends StatelessWidget {
           ),
 
           // أزرار الحساب والنقل
-          if (orders.isNotEmpty)
+        // ✅ أزرار النقل والحساب للكاشير فقط
+          if (orders.isNotEmpty && !state.isAdmin)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
               child: Row(children: [
