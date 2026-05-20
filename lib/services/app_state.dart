@@ -57,8 +57,10 @@ class AppState extends ChangeNotifier {
 
   final Set<int> _alertedDevices = {};
   final Set<int> _countdownAlertedDevices = {};
-  // ✅ حماية من double-checkout: بيمنع إنهاء نفس الجهاز مرتين في نفس الوقت
+  // ✅ حماية من double-checkout
   final Set<int> _stoppingDevices = {};
+  // ✅ أجهزة بتتقفل دلوقتي — بنتجاهل أي SSE جاي عليها لحد ما الـ push يوصل
+  final Set<int> _lockingDevices = {};
 
   bool get isLoggedIn => isAdmin || isCashier;
 
@@ -323,13 +325,15 @@ void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
       .map((j) => (j['id'] as num?)?.toInt() ?? 0)
       .toSet();
 
-  // احذف الأجهزة اللي اتحذفت من الموبيل التاني
   devices.removeWhere((d) => !remoteIds.contains(d.id));
 
   for (final remoteJson in remoteDevices) {
     final remoteId = (remoteJson['id'] as num?)?.toInt() ?? 0;
-    final idx = devices.indexWhere((d) => d.id == remoteId);
 
+    // ✅ لو الجهاز ده بنقفله دلوقتي — تجاهل الـ SSE الجاي عليه
+    if (_lockingDevices.contains(remoteId)) continue;
+
+    final idx = devices.indexWhere((d) => d.id == remoteId);
     if (idx != -1) {
       final updated = PSDevice.fromJson(remoteJson, remoteId);
       updated.updateTimer();
@@ -1041,7 +1045,12 @@ void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
     d.sessionLog = [];
     _alertedDevices.remove(d.id);
     _countdownAlertedDevices.remove(d.id);
-    _saveDevices();
+    _lockingDevices.add(d.id); // ✅ قفل مؤقت
+    _saveDevices().then((_) {
+      Future.delayed(const Duration(seconds: 2), () {
+        _lockingDevices.remove(d.id);
+      });
+    });
     notifyListeners();
   }
 
@@ -1096,9 +1105,19 @@ void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
     d.sessionLog = [];
     _alertedDevices.remove(d.id);
     _countdownAlertedDevices.remove(d.id);
-    _stoppingDevices.remove(d.id); // ✅ رفع القفل بعد الإنهاء
+    _stoppingDevices.remove(d.id);
 
-    _saveDevices();
+    // ✅ ضيف الجهاز في _lockingDevices — بيمنع الـ SSE يرجّعه شغال
+    _lockingDevices.add(d.id);
+
+    // بعت للـ Firebase وبعدين شيل القفل
+    _saveDevices().then((_) {
+      // بعد ما الـ push وصل لـ Firebase، الـ SSE هيجي بالحالة الصح
+      // نستنى ثانيتين عشان الـ SSE يتحدث ثم نشيل القفل
+      Future.delayed(const Duration(seconds: 2), () {
+        _lockingDevices.remove(d.id);
+      });
+    });
     _saveHistory();
     notifyListeners();
     return record;
