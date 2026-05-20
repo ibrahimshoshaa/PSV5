@@ -621,8 +621,8 @@ void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
       'daily_inventory_summary': dailyInventorySummary,
       'cashiers': cashiers,
       'cashier_password_hash': cashierPasswordHash,
+      'admin_password_hash': adminPasswordHash,
       'settings': {
-        'admin_password_hash': adminPasswordHash,
         'shop_name': shopName,
         'match_enabled': matchEnabled,
         'num_devices': numDevices,
