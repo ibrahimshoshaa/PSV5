@@ -88,7 +88,6 @@ class SyncService {
   StreamSubscription? _devicesSSE;
   StreamSubscription? _tablesSSE;      // ← جديد
   StreamSubscription? _drinkTablesSSE; // ← 
-  جديد
   StreamSubscription? _staticSSE;
   // ── حالة ──────────────────────────────────────────────────────────────────
   bool _paused = false;
