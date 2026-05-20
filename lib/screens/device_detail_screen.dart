@@ -52,16 +52,17 @@ class DeviceDetailScreen extends StatelessWidget {
           ],
         ),
         leading: const BackButton(color: Colors.white),
-        actions: [
-  if (device.isActive) ...[
-    // ✅ زرار QR
+       actions: [
+  // ✅ QR للكل (أدمن وكاشير)
+  if (device.isActive)
     IconButton(
       icon: const Icon(Icons.qr_code, color: Colors.white54, size: 24),
       onPressed: () => Navigator.push(context,
           MaterialPageRoute(builder: (_) => QrScreen(device: device))),
       tooltip: 'QR Code',
     ),
-    // ✅ باقي الأزرار في menu واحد
+  // ✅ باقي الأزرار للكاشير فقط
+  if (device.isActive && !state.isAdmin) ...[
     PopupMenuButton<String>(
       icon: const Icon(Icons.more_vert, color: Colors.white70),
       color: const Color(0xFF1c2128),
@@ -700,6 +701,8 @@ class _StartButtons extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
+    // ✅ الأدمن مش بيشوف أزرار التشغيل
+    if (state.isAdmin) return const SizedBox.shrink();
     final matchEnabled = state.matchEnabled;
     final matchPrice = state.matchPriceFor(device);
 
@@ -791,7 +794,7 @@ class _BuffetSection extends StatelessWidget {
                   name: e.key,
                   price: e.value,
                   qty: device.orders[e.key] ?? 0,
-                  onAdd: () {
+                  onAdd: state.isAdmin ? () {} : () {
                     final err = state.addOrder(device, e.key, 1);
                     if (err != null) {
                       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -801,8 +804,8 @@ class _BuffetSection extends StatelessWidget {
                       ));
                     }
                   },
-                  onRemove: () => state.addOrder(device, e.key, -1),
-                )),
+            onRemove: state.isAdmin ? () {} : () => state.addOrder(device, e.key, -1),
+            )),
         ],
       ),
     );
@@ -873,6 +876,8 @@ class _StopButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = context.read<AppState>();
+    // ✅ الأدمن مش بيشوف زرار الإيقاف
+    if (state.isAdmin) return const SizedBox.shrink();
     final timePrice = device.calculateTimePrice(state.prices);
     final buffetPrice = device.getBuffetPrice(state.menu);
 
