@@ -464,12 +464,13 @@ class _TimerCard extends StatelessWidget {
                   highlight: true),
             ],
           ),
-          if (isActive) ...[
-            const SizedBox(height: 16),
-            const Divider(color: Colors.white12),
-            const SizedBox(height: 8),
-            _AddTimeButton(device: device),
-          ],
+         if (isActive && !context.read<AppState>().isAdmin) ...[
+  const SizedBox(height: 16),
+  const Divider(color: Colors.white12),
+  const SizedBox(height: 8),
+  _AddTimeButton(device: device),
+],
+          
         ],
       ),
     );
