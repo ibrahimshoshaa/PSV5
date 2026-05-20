@@ -82,8 +82,8 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
           Text(t['name'] ?? '', style: const TextStyle(color: Color(0xFF34d399), fontWeight: FontWeight.bold)),
         ]),
         leading: const BackButton(color: Colors.white),
-        actions: [
-          // ✅ زرار QR - دايماً ظاهر
+       actions: [
+          // ✅ زرار QR - دايماً ظاهر للكل
           IconButton(
             icon: const Icon(Icons.qr_code, color: Colors.white54, size: 26),
             tooltip: 'QR Code',
@@ -94,10 +94,11 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
               ),
             ),
           ),
-          if (isActive) ...[
+          // ✅ أزرار العمليات للكاشير فقط
+          if (isActive && !state.isAdmin) ...[
             IconButton(
               icon: Icon(isPaused ? Icons.play_circle_fill : Icons.pause_circle_filled,
-                  color: isPaused ? Colors.amber : const Color(0xFF38bdf8), size: 30),
+                         color: isPaused ? Colors.amber : const Color(0xFF38bdf8), size: 30),
               onPressed: () => state.toggleTablePause(widget.tableIndex),
             ),
             if (state.isAdmin)
@@ -152,8 +153,8 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
 
           const SizedBox(height: 16),
 
-          // Start button if not active
-          if (!isActive)
+    // ✅ زرار البداية للكاشير فقط
+          if (!isActive && !state.isAdmin)
             SizedBox(
               width: double.infinity,
               height: 54,
@@ -169,8 +170,8 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
               ),
             ),
 
-          // زرار الجيم - دايماً ظاهر لو سعر الجيم محدد
-          if (gamePrice > 0) ...[
+   // ✅ زرار الجيم للكاشير فقط
+          if (gamePrice > 0 && !state.isAdmin) ...[
             const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
@@ -193,8 +194,8 @@ class _TableDetailScreenState extends State<TableDetailScreen> {
             ),
           ],
 
-          // Buffet section if active
-          if (isActive) ...[
+        // ✅ البوفيه وزرار الإيقاف للكاشير فقط
+          if (isActive && !state.isAdmin) ...[
             const SizedBox(height: 16),
             _BuffetSection(tableIndex: widget.tableIndex, orders: orders),
             const SizedBox(height: 16),
@@ -343,13 +344,14 @@ class _BuffetSection extends StatelessWidget {
                   Text('x$qty', style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 12)),
                 ],
                 const SizedBox(width: 8),
-                GestureDetector(
-                  onTap: () => state.addTableOrder(tableIndex, e.key, -1),
-                  child: const Icon(Icons.remove_circle_outline, size: 18, color: Colors.red),
+              GestureDetector(
+                  onTap: state.isAdmin ? null : () => state.addTableOrder(tableIndex, e.key, -1),
+                  child: Icon(Icons.remove_circle_outline, size: 18,
+                      color: state.isAdmin ? Colors.white12 : Colors.red),
                 ),
                 const SizedBox(width: 4),
-               GestureDetector(
-                  onTap: () {
+             GestureDetector(
+                  onTap: state.isAdmin ? null : () {
                     final err = state.addTableOrder(tableIndex, e.key, 1);
                     if (err != null) {
                       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -359,7 +361,8 @@ class _BuffetSection extends StatelessWidget {
                       ));
                     }
                   },
-                  child: const Icon(Icons.add_circle_outline, size: 18, color: Color(0xFF4ade80)),
+                  child: Icon(Icons.add_circle_outline, size: 18,
+                      color: state.isAdmin ? Colors.white12 : const Color(0xFF4ade80)),
                 ),
               ]),
             );
