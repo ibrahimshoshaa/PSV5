@@ -186,26 +186,28 @@ class AppState extends ChangeNotifier {
     _sync!.start();
   }
 
- void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
+void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
   if (remoteDevices.isEmpty) return;
 
-  final localIds = devices.map((d) => d.id).toSet();
+  final remoteIds = remoteDevices
+      .map((j) => (j['id'] as num?)?.toInt() ?? 0)
+      .toSet();
+
+  // احذف الأجهزة اللي اتحذفت من الموبيل التاني
+  devices.removeWhere((d) => !remoteIds.contains(d.id));
 
   for (final remoteJson in remoteDevices) {
     final remoteId = (remoteJson['id'] as num?)?.toInt() ?? 0;
+    final idx = devices.indexWhere((d) => d.id == remoteId);
 
-    if (localIds.contains(remoteId)) {
-      final idx = devices.indexWhere((d) => d.id == remoteId);
-      if (idx != -1) {
-        final updated = PSDevice.fromJson(remoteJson, remoteId);
-        updated.updateTimer();
-        devices[idx] = updated;
-      }
+    if (idx != -1) {
+      final updated = PSDevice.fromJson(remoteJson, remoteId);
+      updated.updateTimer();
+      devices[idx] = updated;
     } else {
       final newDevice = PSDevice.fromJson(remoteJson, remoteId);
       newDevice.updateTimer();
       devices.add(newDevice);
-      localIds.add(remoteId);
     }
   }
 }
