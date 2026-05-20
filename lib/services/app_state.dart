@@ -413,12 +413,16 @@ void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
   if (s['admin_password_hash'] != null) {
     adminPasswordHash = s['admin_password_hash'];
   }
-  if (s['shop_name'] != null) {
-    shopName = s['shop_name'];
-  }
-  if (s['match_enabled'] != null) {
-    matchEnabled = s['match_enabled'];
-  }
+ if (s['shop_name'] != null) {
+  shopName = s['shop_name'];
+} else if (s['settings'] != null && (s['settings'] as Map)['shop_name'] != null) {
+  shopName = (s['settings'] as Map)['shop_name'];
+}
+if (s['match_enabled'] != null) {
+  matchEnabled = s['match_enabled'];
+} else if (s['settings'] != null && (s['settings'] as Map)['match_enabled'] != null) {
+  matchEnabled = (s['settings'] as Map)['match_enabled'];
+}
   if (s['debts'] != null) {
     debts = List<Map<String, dynamic>>.from(
         (s['debts'] as List).map((d) => Map<String, dynamic>.from(d)));
