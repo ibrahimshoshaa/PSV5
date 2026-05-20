@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/app_state.dart';
 import 'shift_screen.dart';
+import 'home_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -84,6 +85,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
         centerTitle: true,
         automaticallyImplyLeading: false,
+leading: IconButton(
+  icon: const Icon(Icons.sports_esports, color: Color(0xFF38bdf8)),
+  tooltip: 'الأجهزة',
+  onPressed: () => Navigator.push(
+    context,
+    MaterialPageRoute(builder: (_) => const HomeScreen()),
+  ),
+),
       ),
       body: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
