@@ -612,7 +612,25 @@ class _TableCard extends StatelessWidget {
               ),
             ]),
             const SizedBox(height: 8),
-            if (!isActive)
+            if (state.isAdmin)
+              // ✅ الأدمن بيشوف الحالة فقط
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.06),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: color.withOpacity(0.2)),
+                ),
+                child: Center(
+                  child: Text(
+                    isActive ? (isPaused ? 'موقوفة مؤقتاً' : 'شغالة') : 'فاضية',
+                    style: TextStyle(color: color, fontSize: 11,
+                        fontWeight: FontWeight.bold),
+                  ),
+                ),
+              )
+            else if (!isActive)
               SizedBox(
                 width: double.infinity,
                 height: 34,
@@ -637,26 +655,18 @@ class _TableCard extends StatelessWidget {
                   child: SizedBox(
                     height: 34,
                     child: OutlinedButton(
-                      onPressed: () =>
-                          state.toggleTablePause(tableIndex),
+                      onPressed: () => state.toggleTablePause(tableIndex),
                       style: OutlinedButton.styleFrom(
                         padding: EdgeInsets.zero,
                         side: BorderSide(
-                            color: isPaused
-                                ? Colors.amber
-                                : Colors.white24),
+                            color: isPaused ? Colors.amber : Colors.white24),
                         shape: RoundedRectangleBorder(
-                            borderRadius:
-                                BorderRadius.circular(10)),
+                            borderRadius: BorderRadius.circular(10)),
                       ),
                       child: Icon(
-                        isPaused
-                            ? Icons.play_arrow_rounded
-                            : Icons.pause_rounded,
+                        isPaused ? Icons.play_arrow_rounded : Icons.pause_rounded,
                         size: 18,
-                        color: isPaused
-                            ? Colors.amber
-                            : Colors.white54,
+                        color: isPaused ? Colors.amber : Colors.white54,
                       ),
                     ),
                   ),
@@ -667,20 +677,17 @@ class _TableCard extends StatelessWidget {
                   child: SizedBox(
                     height: 34,
                     child: FilledButton(
-                      onPressed: () =>
-                          _confirmStop(context, state),
+                      onPressed: () => _confirmStop(context, state),
                       style: FilledButton.styleFrom(
                         backgroundColor: const Color(0xFF4ade80),
                         foregroundColor: Colors.black,
                         padding: EdgeInsets.zero,
                         shape: RoundedRectangleBorder(
-                            borderRadius:
-                                BorderRadius.circular(10)),
+                            borderRadius: BorderRadius.circular(10)),
                       ),
                       child: const Text('حساب',
                           style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold)),
+                              fontSize: 12, fontWeight: FontWeight.bold)),
                     ),
                   ),
                 ),
@@ -912,7 +919,7 @@ class _DrinkTableCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 6),
-              Row(children: [
+if (!state.isAdmin) Row(children: [
                 Expanded(
                   child: SizedBox(
                     height: 32,
@@ -924,11 +931,9 @@ class _DrinkTableCard extends StatelessWidget {
                                   tableIndex: index))),
                       style: OutlinedButton.styleFrom(
                         padding: EdgeInsets.zero,
-                        side: const BorderSide(
-                            color: Colors.white24),
+                        side: const BorderSide(color: Colors.white24),
                         shape: RoundedRectangleBorder(
-                            borderRadius:
-                                BorderRadius.circular(10)),
+                            borderRadius: BorderRadius.circular(10)),
                       ),
                       child: const Icon(Icons.add,
                           size: 16, color: Colors.white54),
@@ -942,20 +947,17 @@ class _DrinkTableCard extends StatelessWidget {
                     child: SizedBox(
                       height: 32,
                       child: FilledButton(
-                        onPressed: () => _confirmCheckout(
-                            context, state, total),
+                        onPressed: () => _confirmCheckout(context, state, total),
                         style: FilledButton.styleFrom(
                           backgroundColor: Colors.orange,
                           foregroundColor: Colors.black,
                           padding: EdgeInsets.zero,
                           shape: RoundedRectangleBorder(
-                              borderRadius:
-                                  BorderRadius.circular(10)),
+                              borderRadius: BorderRadius.circular(10)),
                         ),
                         child: const Text('حساب',
                             style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold)),
+                                fontSize: 12, fontWeight: FontWeight.bold)),
                       ),
                     ),
                   ),
