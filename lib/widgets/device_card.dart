@@ -450,6 +450,22 @@ class _StartButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isAdmin = context.read<AppState>().isAdmin;
+    if (isAdmin) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.04),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.white12),
+        ),
+        child: const Center(
+          child: Text('متاح — للمراقبة فقط',
+              style: TextStyle(color: Colors.white24, fontSize: 11)),
+        ),
+      );
+    }
     return SizedBox(
       width: double.infinity,
       child: FilledButton.icon(
@@ -485,6 +501,28 @@ class _ActiveButtons extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = context.read<AppState>();
+    // ✅ الأدمن بيشوف الإجمالي بس بدون أزرار
+    if (state.isAdmin) {
+      final timePrice = device.calculateTimePrice(state.prices);
+      final buffetPrice = device.getBuffetPrice(state.menu);
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        decoration: BoxDecoration(
+          color: const Color(0xFF4ade80).withOpacity(0.06),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: const Color(0xFF4ade80).withOpacity(0.2)),
+        ),
+        child: Text(
+          '${(timePrice + buffetPrice).toStringAsFixed(1)} ج',
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+              color: Color(0xFF4ade80),
+              fontWeight: FontWeight.bold,
+              fontSize: 14),
+        ),
+      );
+    }
     return Row(
       children: [
         AnimatedSwitcher(
