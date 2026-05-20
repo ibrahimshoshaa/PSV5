@@ -71,8 +71,9 @@ class AppState extends ChangeNotifier {
   }
 
   bool get hasOpenShift =>
-      currentCashierName != null &&
-      openShifts.containsKey(currentCashierName);
+    currentCashierName != null &&
+    openShifts.containsKey(currentCashierName) &&
+    openShifts[currentCashierName] != null;
 
   ShiftRecord? get currentShift =>
       currentCashierName != null ? openShifts[currentCashierName] : null;
@@ -288,12 +289,13 @@ class AppState extends ChangeNotifier {
         });
         // شيل الشيفتات اللي اتقفلت في موبايل تاني
         openShifts.removeWhere((name, _) {
-          if (!typed.containsKey(name)) {
-            changed = true;
-            return true;
-          }
-          return false;
-        });
+  if (name == currentCashierName) return false;
+  if (!typed.containsKey(name)) {
+    changed = true;
+    return true;
+  }
+  return false;
+});
       }
 
       // ── ملخص المخزون اليومي ───────────────────────────────────────────
