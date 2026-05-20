@@ -47,6 +47,7 @@ class AppState extends ChangeNotifier {
 
   Timer? _clockTimer;
   SyncService? _sync;
+  Timer? _historyPollTimer; // ✅ polling للسجلات كل 5 ثواني
   bool archiving = false;
 
   String? shopId;
@@ -56,6 +57,8 @@ class AppState extends ChangeNotifier {
 
   final Set<int> _alertedDevices = {};
   final Set<int> _countdownAlertedDevices = {};
+  // ✅ حماية من double-checkout: بيمنع إنهاء نفس الجهاز مرتين في نفس الوقت
+  final Set<int> _stoppingDevices = {};
 
   bool get isLoggedIn => isAdmin || isCashier;
 
@@ -188,6 +191,33 @@ class AppState extends ChangeNotifier {
       ),
     );
     _sync!.start();
+
+    // ✅ polling للسجلات كل 5 ثواني — عشان السجلات تتزامن بين الموبايلين
+    _historyPollTimer?.cancel();
+    _historyPollTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      _pollHistory();
+    });
+  }
+
+  Future<void> _pollHistory() async {
+    if (shopId == null || archiving) return;
+    try {
+      final remote = await FirebaseService.get(
+          FirebaseService.historyPath(shopId!));
+      if (remote == null || remote is! List) return;
+      _mergeRemoteHistory(List<Map<String, dynamic>>.from(
+          remote.map((h) => Map<String, dynamic>.from(h))));
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  void _mergeRemoteHistory(List<Map<String, dynamic>> remoteHistory) {
+    if (remoteHistory.isEmpty) return;
+    // لو الريموت فيه أكتر من المحلي — خد الريموت كاملاً
+    // (السجلات append only — مفيش تعديل)
+    if (remoteHistory.length > history.length) {
+      history = remoteHistory;
+    }
   }
 
 void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
@@ -224,9 +254,26 @@ void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
         tables.add(remoteTables[i]);
         continue;
       }
-      if (tables[i]['start_time'] == null) {
+      final localStartTime = tables[i]['start_time'];
+      final remoteStartTime = remoteTables[i]['start_time'];
+
+      // ✅ لو الريموت وقّف التربيزة (start_time = null) → اتبع الريموت دايماً
+      if (remoteStartTime == null) {
+        tables[i] = remoteTables[i];
+        continue;
+      }
+
+      // لو محلياً فاضية والريموت شغّلها → اتبع الريموت
+      if (localStartTime == null) {
+        tables[i] = remoteTables[i];
+        continue;
+      }
+
+      // الاتنين شغالين → اتبع الأقدم (اللي بدأ أول)
+      if ((remoteStartTime as num) < (localStartTime as num)) {
         tables[i] = remoteTables[i];
       }
+      // لو محلي أقدم → خليه زي ما هو (الموبايل ده هو اللي شغّل)
     }
   }
 
@@ -238,11 +285,23 @@ void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
         drinkTables.add(remoteDrinkTables[i]);
         continue;
       }
-      final localOrders =
-          Map<String, int>.from(drinkTables[i]['orders'] ?? {});
+      final localOrders = Map<String, int>.from(drinkTables[i]['orders'] ?? {});
+      final remoteOrders = Map<String, dynamic>.from(remoteDrinkTables[i]['orders'] ?? {});
+
+      // ✅ لو الريموت صفّر الطلبات (checkout من موبايل تاني) → اتبع الريموت
+      if (remoteOrders.isEmpty) {
+        drinkTables[i] = remoteDrinkTables[i];
+        continue;
+      }
+
+      // لو محلي فاضي والريموت فيه طلبات → اتبع الريموت
       if (localOrders.isEmpty) {
         drinkTables[i] = remoteDrinkTables[i];
+        continue;
       }
+
+      // الاتنين فيهم طلبات → اتبع الريموت (الأحدث من Firebase)
+      drinkTables[i] = remoteDrinkTables[i];
     }
   }
   void _applyStaticData(Map<String, dynamic> s) {
@@ -886,6 +945,11 @@ void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
   }
 
   Map<String, dynamic> stopDevice(PSDevice d) {
+    // ✅ حماية من double-checkout
+    if (_stoppingDevices.contains(d.id)) return {};
+    if (!d.isActive && d.orders.isEmpty) return {};
+    _stoppingDevices.add(d.id);
+
     _logEvent(d, 'stop', note: 'انتهت الجلسة');
     final timePrice = d.isActive ? d.calculateTimePrice(prices) : 0.0;
     final buffetPrice = d.getBuffetPrice(menu);
@@ -931,6 +995,7 @@ void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
     d.sessionLog = [];
     _alertedDevices.remove(d.id);
     _countdownAlertedDevices.remove(d.id);
+    _stoppingDevices.remove(d.id); // ✅ رفع القفل بعد الإنهاء
 
     _saveDevices();
     _saveHistory();
@@ -1642,6 +1707,7 @@ void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
   @override
   void dispose() {
     _clockTimer?.cancel();
+    _historyPollTimer?.cancel(); // ✅
     _sync?.flushAll();
     _sync?.dispose();
     super.dispose();
