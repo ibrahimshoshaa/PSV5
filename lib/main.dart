@@ -95,8 +95,8 @@ Widget build(BuildContext context) {
   if (!state.isActivated) return const ActivationScreen();
 
   // الأدمن — مفيش شيفت بالنسبة له
-  if (state.isAdmin) return const HomeScreen();
-
+if (state.isAdmin) return const DashboardScreen();
+  
   // الكاشير — لازم يبدأ شيفت الأول
   if (state.isCashier) {
     // لو مفيش شيفت مفتوح → اعرض شاشة بداية الشيفت
