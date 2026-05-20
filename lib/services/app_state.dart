@@ -192,29 +192,125 @@ class AppState extends ChangeNotifier {
     );
     _sync!.start();
 
-    // ✅ polling للسجلات كل 5 ثواني — عشان السجلات تتزامن بين الموبايلين
+    // ✅ polling شامل — fallback لكل البيانات
+    // السجلات كل 5 ثواني — الباقي كل 10 ثواني
     _historyPollTimer?.cancel();
     _historyPollTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-      _pollHistory();
+      _pollAll();
     });
   }
 
-  Future<void> _pollHistory() async {
+  Future<void> _pollAll() async {
     if (shopId == null || archiving) return;
     try {
-      final remote = await FirebaseService.get(
-          FirebaseService.historyPath(shopId!));
-      if (remote == null || remote is! List) return;
-      _mergeRemoteHistory(List<Map<String, dynamic>>.from(
-          remote.map((h) => Map<String, dynamic>.from(h))));
-      notifyListeners();
+      // نجيب كل البيانات بالتوازي
+      final results = await Future.wait([
+        FirebaseService.get(FirebaseService.historyPath(shopId!)),
+        FirebaseService.get(FirebaseService.staticDataPath(shopId!)),
+        FirebaseService.get(FirebaseService.debtsPath(shopId!)),
+        FirebaseService.get(FirebaseService.shopTournamentsPath(shopId!)),
+        FirebaseService.get(FirebaseService.shiftsHistoryPath(shopId!)),
+        FirebaseService.get(FirebaseService.openShiftsPath(shopId!)),
+        FirebaseService.get(FirebaseService.dailySummaryPath(shopId!)),
+      ]);
+
+      bool changed = false;
+
+      // ── السجلات ───────────────────────────────────────────────────────
+      final remoteHistory = results[0];
+      if (remoteHistory != null && remoteHistory is List) {
+        final typed = List<Map<String, dynamic>>.from(
+            remoteHistory.map((h) => Map<String, dynamic>.from(h)));
+        if (typed.length != history.length) {
+          history = typed;
+          changed = true;
+        }
+      }
+
+      // ── البيانات الثابتة (أسعار / منيو / إعدادات) ────────────────────
+      final remoteStatic = results[1];
+      if (remoteStatic != null && remoteStatic is Map) {
+        final s = Map<String, dynamic>.from(remoteStatic);
+        _applyStaticData(s);
+        changed = true;
+      }
+
+      // ── المديونيات ────────────────────────────────────────────────────
+      final remoteDebts = results[2];
+      if (remoteDebts != null && remoteDebts is List) {
+        final typed = List<Map<String, dynamic>>.from(
+            remoteDebts.map((d) => Map<String, dynamic>.from(d)));
+        if (typed.length != debts.length) {
+          debts = typed;
+          changed = true;
+        }
+      }
+
+      // ── البطولات ──────────────────────────────────────────────────────
+      final remoteTournaments = results[3];
+      if (remoteTournaments != null && remoteTournaments is List) {
+        final typed = List<Map<String, dynamic>>.from(
+            remoteTournaments.map((t) => Map<String, dynamic>.from(t)));
+        if (typed.length != tournaments.length) {
+          tournaments = typed;
+          changed = true;
+        }
+      }
+
+      // ── تاريخ الشيفتات ────────────────────────────────────────────────
+      final remoteShiftsHistory = results[4];
+      if (remoteShiftsHistory != null && remoteShiftsHistory is List) {
+        final typed = List<ShiftRecord>.from(
+          (remoteShiftsHistory).map(
+            (s) => ShiftRecord.fromJson(Map<String, dynamic>.from(s)),
+          ),
+        );
+        if (typed.length != shiftsHistory.length) {
+          shiftsHistory = typed;
+          changed = true;
+        }
+      }
+
+      // ── الشيفتات المفتوحة ─────────────────────────────────────────────
+      final remoteOpenShifts = results[5];
+      if (remoteOpenShifts != null && remoteOpenShifts is Map) {
+        final raw = Map<String, dynamic>.from(remoteOpenShifts);
+        final typed = raw.map((k, v) =>
+            MapEntry(k, ShiftRecord.fromJson(Map<String, dynamic>.from(v))));
+        // حدّث بس الشيفتات اللي مش مفتوحة محلياً
+        typed.forEach((name, shift) {
+          if (!openShifts.containsKey(name)) {
+            openShifts[name] = shift;
+            changed = true;
+          }
+        });
+        // شيل الشيفتات اللي اتقفلت في موبايل تاني
+        openShifts.removeWhere((name, _) {
+          if (!typed.containsKey(name)) {
+            changed = true;
+            return true;
+          }
+          return false;
+        });
+      }
+
+      // ── ملخص المخزون اليومي ───────────────────────────────────────────
+      final remoteSummary = results[6];
+      if (remoteSummary != null && remoteSummary is Map) {
+        final typed = Map<String, int>.from(
+            remoteSummary.map((k, v) => MapEntry(k.toString(), (v as num).toInt())));
+        if (typed.length != dailyInventorySummary.length) {
+          dailyInventorySummary = typed;
+          changed = true;
+        }
+      }
+
+      if (changed) notifyListeners();
     } catch (_) {}
   }
 
   void _mergeRemoteHistory(List<Map<String, dynamic>> remoteHistory) {
     if (remoteHistory.isEmpty) return;
-    // لو الريموت فيه أكتر من المحلي — خد الريموت كاملاً
-    // (السجلات append only — مفيش تعديل)
     if (remoteHistory.length > history.length) {
       history = remoteHistory;
     }
