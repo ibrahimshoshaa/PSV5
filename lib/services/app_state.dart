@@ -1219,13 +1219,14 @@ if (s['match_enabled'] != null) {
   // DEVICE MANAGEMENT
   // ══════════════════════════════════════════════════════════════════════════
 
-  void addDevice(String name, String type) {
+ void addDevice(String name, String type) {
     final id = devices.length + 1;
     final d = PSDevice(id: id, deviceType: type);
     d.displayName = name;
     devices.add(d);
     numDevices = devices.length;
     saveData();
+    _saveDevices();
     notifyListeners();
   }
 
@@ -1236,6 +1237,7 @@ if (s['match_enabled'] != null) {
     }
     numDevices = devices.length;
     saveData();
+    _saveDevices();
     notifyListeners();
   }
 
@@ -1256,7 +1258,7 @@ if (s['match_enabled'] != null) {
   // TABLE ACTIONS
   // ══════════════════════════════════════════════════════════════════════════
 
-  void addTable(String name, int ratePerHour,
+void addTable(String name, int ratePerHour,
       {String tableType = 'ping', int gamePrice = 0}) {
     tables.add({
       'name': name,
@@ -1269,22 +1271,24 @@ if (s['match_enabled'] != null) {
       'orders': <String, int>{},
     });
     saveData();
+    _saveTables();
     notifyListeners();
   }
 
-  void removeTable(int index) {
+ void removeTable(int index) {
     tables.removeAt(index);
     saveData();
+    _saveTables();
     notifyListeners();
   }
-
-  void updateTableSettings(int index, String name, int rate,
+ void updateTableSettings(int index, String name, int rate,
       {String? tableType, int? gamePrice}) {
     tables[index]['name'] = name;
     tables[index]['rate'] = rate;
     if (tableType != null) tables[index]['table_type'] = tableType;
     if (gamePrice != null) tables[index]['game_price'] = gamePrice;
     saveData();
+    _saveTables();
     notifyListeners();
   }
 
@@ -1414,18 +1418,21 @@ if (s['match_enabled'] != null) {
   void addDrinkTable(String name) {
     drinkTables.add({'name': name, 'orders': <String, int>{}});
     saveData();
+    _saveTables();
     notifyListeners();
   }
 
   void removeDrinkTable(int index) {
     drinkTables.removeAt(index);
     saveData();
+    _saveTables();
     notifyListeners();
   }
 
   void updateDrinkTableName(int index, String name) {
     drinkTables[index]['name'] = name;
     saveData();
+    _saveTables();
     notifyListeners();
   }
 
@@ -1661,12 +1668,14 @@ if (s['match_enabled'] != null) {
   void updateDeviceName(PSDevice d, String name) {
     d.displayName = name;
     saveData();
+    _saveDevices();
     notifyListeners();
   }
 
   void updateDeviceType(PSDevice d, String type) {
     d.deviceType = type;
     saveData();
+    _saveDevices();
     notifyListeners();
   }
 
