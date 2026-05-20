@@ -346,40 +346,38 @@ void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
   }
 }
 
-  void _mergeRemoteTables(List<Map<String, dynamic>> remoteTables) {
-    if (remoteTables.isEmpty) return;
+ void _mergeRemoteTables(List<Map<String, dynamic>> remoteTables) {
+  if (remoteTables.isEmpty) return;
 
-    // ✅ ضيف التربيزات الجديدة من الريموت
-    while (tables.length < remoteTables.length) {
-      tables.add(remoteTables[tables.length]);
+  while (tables.length < remoteTables.length) {
+    tables.add(remoteTables[tables.length]);
+  }
+
+  for (int i = 0; i < remoteTables.length; i++) {
+    final localStartTime = tables[i]['start_time'];
+    final remoteStartTime = remoteTables[i]['start_time'];
+
+    if (remoteStartTime == null) {
+      tables[i] = remoteTables[i];
+      continue;
     }
-
-    for (int i = 0; i < remoteTables.length; i++) {
-      final localStartTime = tables[i]['start_time'];
-      final remoteStartTime = remoteTables[i]['start_time'];
-
-      // الريموت وقّف التربيزة → اتبعه دايماً
-      if (remoteStartTime == null) {
-        tables[i] = remoteTables[i];
-        continue;
-      }
-      // محلياً فاضية → اتبع الريموت
-      if (localStartTime == null) {
-        tables[i] = remoteTables[i];
-        continue;
-      }
-      // الاتنين شغالين → اتبع الأقدم
-      if ((remoteStartTime as num) < (localStartTime as num)) {
-        tables[i] = remoteTables[i];
-      }
+    if (localStartTime == null) {
+      tables[i] = remoteTables[i];
+      continue;
     }
-
-    // ✅ احذف التربيزات اللي اتحذفت من الريموت
-    if (remoteTables.length < tables.length) {
-      tables.removeRange(remoteTables.length, tables.length);
+    if ((remoteStartTime as num) < (localStartTime as num)) {
+      tables[i] = remoteTables[i];
+    } else {
+      tables[i]['is_paused'] = remoteTables[i]['is_paused'];
+      tables[i]['pause_start_time'] = remoteTables[i]['pause_start_time'];
+      tables[i]['orders'] = remoteTables[i]['orders'];
     }
   }
 
+  if (remoteTables.length < tables.length) {
+    tables.removeRange(remoteTables.length, tables.length);
+  }
+}
   void _mergeRemoteDrinkTables(List<Map<String, dynamic>> remoteDrinkTables) {
     if (remoteDrinkTables.isEmpty) return;
 
@@ -807,9 +805,9 @@ void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
       'cashiers': cashiers,
       'cashier_password_hash': cashierPasswordHash,
       'admin_password_hash': adminPasswordHash,
-      'settings': {
-        'shop_name': shopName,
+       'shop_name': shopName,
         'match_enabled': matchEnabled,
+      'settings': {
         'num_devices': numDevices,
       },
       'debts': debts,
@@ -1201,6 +1199,7 @@ void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
       }
       if (result == null) return false;
       history.clear();
+      await FirebaseService.set(FirebaseService.historyPath(shopId!), []); // ← أضف هذا
       await _saveHistory();
       notifyListeners();
       return true;
