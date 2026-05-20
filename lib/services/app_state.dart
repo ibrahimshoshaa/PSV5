@@ -345,59 +345,53 @@ void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
   void _mergeRemoteTables(List<Map<String, dynamic>> remoteTables) {
     if (remoteTables.isEmpty) return;
 
+    // ✅ ضيف التربيزات الجديدة من الريموت
+    while (tables.length < remoteTables.length) {
+      tables.add(remoteTables[tables.length]);
+    }
+
     for (int i = 0; i < remoteTables.length; i++) {
-      if (i >= tables.length) {
-        tables.add(remoteTables[i]);
-        continue;
-      }
       final localStartTime = tables[i]['start_time'];
       final remoteStartTime = remoteTables[i]['start_time'];
 
-      // ✅ لو الريموت وقّف التربيزة (start_time = null) → اتبع الريموت دايماً
+      // الريموت وقّف التربيزة → اتبعه دايماً
       if (remoteStartTime == null) {
         tables[i] = remoteTables[i];
         continue;
       }
-
-      // لو محلياً فاضية والريموت شغّلها → اتبع الريموت
+      // محلياً فاضية → اتبع الريموت
       if (localStartTime == null) {
         tables[i] = remoteTables[i];
         continue;
       }
-
-      // الاتنين شغالين → اتبع الأقدم (اللي بدأ أول)
+      // الاتنين شغالين → اتبع الأقدم
       if ((remoteStartTime as num) < (localStartTime as num)) {
         tables[i] = remoteTables[i];
       }
-      // لو محلي أقدم → خليه زي ما هو (الموبايل ده هو اللي شغّل)
+    }
+
+    // ✅ احذف التربيزات اللي اتحذفت من الريموت
+    if (remoteTables.length < tables.length) {
+      tables.removeRange(remoteTables.length, tables.length);
     }
   }
 
   void _mergeRemoteDrinkTables(List<Map<String, dynamic>> remoteDrinkTables) {
     if (remoteDrinkTables.isEmpty) return;
 
+    // ✅ ضيف تربيزات مشروبات جديدة من الريموت
+    while (drinkTables.length < remoteDrinkTables.length) {
+      drinkTables.add(remoteDrinkTables[drinkTables.length]);
+    }
+
     for (int i = 0; i < remoteDrinkTables.length; i++) {
-      if (i >= drinkTables.length) {
-        drinkTables.add(remoteDrinkTables[i]);
-        continue;
-      }
-      final localOrders = Map<String, int>.from(drinkTables[i]['orders'] ?? {});
-      final remoteOrders = Map<String, dynamic>.from(remoteDrinkTables[i]['orders'] ?? {});
-
-      // ✅ لو الريموت صفّر الطلبات (checkout من موبايل تاني) → اتبع الريموت
-      if (remoteOrders.isEmpty) {
-        drinkTables[i] = remoteDrinkTables[i];
-        continue;
-      }
-
-      // لو محلي فاضي والريموت فيه طلبات → اتبع الريموت
-      if (localOrders.isEmpty) {
-        drinkTables[i] = remoteDrinkTables[i];
-        continue;
-      }
-
-      // الاتنين فيهم طلبات → اتبع الريموت (الأحدث من Firebase)
+      // اتبع الريموت دايماً — هو الأحدث من Firebase
       drinkTables[i] = remoteDrinkTables[i];
+    }
+
+    // ✅ احذف التربيزات اللي اتحذفت
+    if (remoteDrinkTables.length < drinkTables.length) {
+      drinkTables.removeRange(remoteDrinkTables.length, drinkTables.length);
     }
   }
   void _applyStaticData(Map<String, dynamic> s) {
@@ -826,6 +820,8 @@ void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
     if (shopId == null) return;
     final data = _buildDataDict();
     await SyncService.saveLocal(shopId!, data);
+    // ✅ بعت الـ static فوراً (أسعار، منيو، إعدادات) عبر SSE
+    await FirebaseService.pushStaticData(shopId!, _buildStaticData());
     _sync?.schedulePushStatic();
   }
 
@@ -836,11 +832,16 @@ void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
     await _sync?.pushDevices();
   }
 
-  void _saveTables() {
+  Future<void> _saveTables() async {
     if (shopId == null) return;
-    _buildDataDict().let((data) async {
-      await SyncService.saveLocal(shopId!, data);
-    });
+    final data = _buildDataDict();
+    await SyncService.saveLocal(shopId!, data);
+    // ✅ بعت للـ realtime عشان الـ SSE يشتغل فوراً
+    await Future.wait([
+      FirebaseService.pushTablesState(shopId!, tables),
+      FirebaseService.pushDrinkTablesState(shopId!, drinkTables),
+    ]);
+    // والـ operational كـ backup
     _sync?.schedulePushTables();
   }
 
@@ -848,7 +849,11 @@ void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
     if (shopId == null) return;
     final data = _buildDataDict();
     await SyncService.saveLocal(shopId!, data);
-    await _sync?.pushHistory();
+    // ✅ بعت السجلات فوراً
+    await Future.wait([
+      FirebaseService.pushHistory(shopId!, history),
+      _sync?.pushHistory() ?? Future.value(),
+    ]);
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -1810,8 +1815,4 @@ void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
   }
 }
 
-// ── Helper extension ──────────────────────────────────────────────────────────
 
-extension _LetExt<T> on T {
-  R let<R>(R Function(T) block) => block(this);
-}
