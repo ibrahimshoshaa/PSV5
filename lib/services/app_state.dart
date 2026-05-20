@@ -1440,10 +1440,11 @@ void _mergeRemoteDevices(List<Map<String, dynamic>> remoteDevices) {
     notifyListeners();
   }
 
-  void changePassword(String newPass) {
-    adminPasswordHash = hashPassword(newPass);
-    saveData();
-  }
+ void changePassword(String newPass) {
+  adminPasswordHash = hashPassword(newPass);
+  saveData();
+  notifyListeners();
+}
 
   void changeCashierPassword(String newPass) {
     if (cashiers.isNotEmpty) {
