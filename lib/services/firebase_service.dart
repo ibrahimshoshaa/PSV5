@@ -317,17 +317,18 @@ class FirebaseService {
       }
 
       // البيانات الثابتة
-      if (staticData != null && staticData is Map) {
-        final s = Map<String, dynamic>.from(staticData);
-        combined['prices'] = s['prices'];
-        combined['menu'] = s['menu'];
-        combined['inventory'] = s['inventory'];
-        combined['cashiers'] = s['cashiers'];
-        combined['admin_password_hash'] = s['admin_password_hash'];
-        combined['shop_name'] = s['shop_name'];
-        combined['match_enabled'] = s['match_enabled'];
-        combined['num_devices'] = s['num_devices'];
-      } else if (oldData != null && oldData is Map) {
+     if (staticData != null && staticData is Map) {
+  final s = Map<String, dynamic>.from(staticData);
+  combined['prices'] = s['prices'];
+  combined['menu'] = s['menu'];
+  combined['inventory'] = s['inventory'];
+  combined['cashiers'] = s['cashiers'];
+  combined['admin_password_hash'] = s['admin_password_hash']; // ← مباشرة
+  combined['shop_name'] = s['shop_name'];
+  combined['match_enabled'] = s['match_enabled'];
+  combined['num_devices'] = s['num_devices'];
+}
+      else if (oldData != null && oldData is Map) {
         combined['prices'] = oldData['prices'];
         combined['menu'] = oldData['menu'];
         combined['inventory'] = oldData['inventory'];
