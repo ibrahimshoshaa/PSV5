@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 import '../services/app_state.dart';
 import 'shift_screen.dart';
 import 'home_screen.dart';
-import 'settings_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -72,7 +71,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       backgroundColor: const Color(0xFF0b0e14),
       appBar: AppBar(
   backgroundColor: const Color(0xFF0b0e14),
-  automaticallyImplyLeading: true,
+  automaticallyImplyLeading: false,
   title: Row(
     mainAxisAlignment: MainAxisAlignment.spaceBetween,
     children: [
@@ -598,4 +597,3 @@ class _SectionHeader extends StatelessWidget {
     ]);
   }
 }
-
