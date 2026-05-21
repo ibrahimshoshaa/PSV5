@@ -1833,7 +1833,12 @@ void addTable(String name, int ratePerHour,
 
     final data = _buildDataDict();
     await SyncService.saveLocal(shopId!, data);
-    _sync?.schedulePushShifts();
+    await Future.wait([
+  FirebaseService.pushOpenShifts(shopId!, 
+      openShifts.map((k, v) => MapEntry(k, v.toJson()))),
+  FirebaseService.pushShiftsHistory(shopId!, 
+      shiftsHistory.map((s) => s.toJson()).toList()),
+]);
 
     notifyListeners();
     return closedShift;
