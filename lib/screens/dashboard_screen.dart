@@ -72,7 +72,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       backgroundColor: const Color(0xFF0b0e14),
       appBar: AppBar(
   backgroundColor: const Color(0xFF0b0e14),
-  automaticallyImplyLeading: false,
+  automaticallyImplyLeading: true,
   title: Row(
     mainAxisAlignment: MainAxisAlignment.spaceBetween,
     children: [
