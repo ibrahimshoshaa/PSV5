@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 import '../services/app_state.dart';
 import 'shift_screen.dart';
 import 'home_screen.dart';
-import 'settings_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -71,51 +70,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFF0b0e14),
       appBar: AppBar(
-  backgroundColor: const Color(0xFF0b0e14),
-  automaticallyImplyLeading: false,
-  title: Row(
-    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-    children: [
-      // ── يسار: زرار الهوم والإعدادات ──
-      Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            icon: const Icon(Icons.home_rounded, color: Colors.white54, size: 22),
-            tooltip: 'الرئيسية',
-            onPressed: () => Navigator.pop(context),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-          ),
-          const SizedBox(width: 4),
-          IconButton(
-            icon: const Icon(Icons.settings, color: Colors.white38, size: 20),
-            tooltip: 'الإعدادات',
-            onPressed: () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const SettingsScreen())),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-          ),
-        ],
-      ),
-      // ── وسط: العنوان ──
-      const Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.dashboard_rounded, color: Color(0xFF38bdf8), size: 18),
-          SizedBox(width: 6),
-          Text('الداشبورد',
-              style: TextStyle(
-                  color: Color(0xFF38bdf8),
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16)),
-        ],
-      ),
-      // ── يمين: placeholder للتوازن ──
-      const SizedBox(width: 80),
-    ],
+        backgroundColor: const Color(0xFF0b0e14),
+        title: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.dashboard_rounded, color: Color(0xFF38bdf8), size: 18),
+            SizedBox(width: 6),
+            Text('الداشبورد',
+                style: TextStyle(
+                    color: Color(0xFF38bdf8),
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16)),
+          ],
+        ),
+        centerTitle: true,
+        automaticallyImplyLeading: false,
+leading: IconButton(
+  icon: const Icon(Icons.sports_esports, color: Color(0xFF38bdf8)),
+  tooltip: 'الأجهزة',
+  onPressed: () => Navigator.push(
+    context,
+    MaterialPageRoute(builder: (_) => const HomeScreen()),
   ),
 ),
+      ),
       body: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         children: [
